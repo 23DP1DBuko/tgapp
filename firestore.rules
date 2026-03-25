@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isValidCategory(category) {
+      return category in ['hoodies', 'tshirts', 'outerwear', 'accessories', 'other'];
+    }
+
+    function isShortString(value, maxLength) {
+      return value is string && value.size() > 0 && value.size() <= maxLength;
+    }
+
+    function isOptionalShortString(value, maxLength) {
+      return !(value is string) || value.size() <= maxLength;
+    }
+
+    function isStringList(values, maxItems, maxLength) {
+      return values is list
+        && values.size() <= maxItems
+        && values.join('').size() <= maxItems * maxLength;
+    }
+
+    function isProductDocument(data) {
+      return data.keys().hasOnly([
+          'name',
+          'description',
+          'category',
+          'brandNames',
+          'price',
+          'currency',
+          'isAvailable',
+          'images',
+          'createdAt',
+          'isLimitedLabel'
+        ])
+        && isShortString(data.name, 120)
+        && isShortString(data.description, 2000)
+        && isValidCategory(data.category)
+        && isStringList(data.brandNames, 10, 60)
+        && data.price is number
+        && data.price >= 0
+        && data.price <= 100000
+        && data.currency == 'EUR'
+        && data.isAvailable is bool
+        && isStringList(data.images, 8, 2000)
+        && data.createdAt is timestamp
+        && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80));
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+
+      // MVP baseline: keep the current admin panel working while still validating shape.
+      // This is not real admin security yet because writes are not identity-protected.
+      allow create, update: if isProductDocument(request.resource.data);
+      allow delete: if true;
+    }
+  }
+}
