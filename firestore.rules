@@ -19,6 +19,29 @@ service cloud.firestore {
         && values.join('').size() <= maxItems * maxLength;
     }
 
+    function isPromoDiscountType(value) {
+      return value in ['percentage', 'fixed_amount'];
+    }
+
+    function isPaymentMethod(value) {
+      return value in ['meetup_cash', 'usdt'];
+    }
+
+    function isFulfillmentType(value) {
+      return value in ['delivery', 'meetup'];
+    }
+
+    function isOrderStatus(value) {
+      return value in [
+        'new',
+        'waiting_for_payment',
+        'paid',
+        'ready_for_meetup',
+        'completed',
+        'cancelled'
+      ];
+    }
+
     function isProductDocument(data) {
       return data.keys().hasOnly([
           'name',
@@ -46,6 +69,100 @@ service cloud.firestore {
         && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80));
     }
 
+    function isPromoDocument(data) {
+      return data.keys().hasOnly([
+          'code',
+          'discountType',
+          'discountValue',
+          'isActive',
+          'expiresAt',
+          'usageLimit'
+        ])
+        && isShortString(data.code, 40)
+        && isPromoDiscountType(data.discountType)
+        && data.discountValue is number
+        && data.discountValue > 0
+        && data.discountValue <= 100000
+        && data.isActive is bool
+        && (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp)
+        && (!('usageLimit' in data) || data.usageLimit == null || (data.usageLimit is number && data.usageLimit >= 0));
+    }
+
+    function isOrderItemList(items) {
+      return items is list && items.size() > 0 && items.size() <= 12;
+    }
+
+    function isAppliedPromo(data) {
+      return data == null
+        || (
+          data is map
+          && data.keys().hasOnly([
+            'code',
+            'discountType',
+            'discountValue',
+            'discountAmount'
+          ])
+          && isShortString(data.code, 40)
+          && isPromoDiscountType(data.discountType)
+          && data.discountValue is number
+          && data.discountAmount is number
+          && data.discountAmount >= 0
+        );
+    }
+
+    function isOrderDocument(data) {
+      return data.keys().hasOnly([
+          'fullName',
+          'telegramHandle',
+          'telegramUserId',
+          'note',
+          'fulfillmentType',
+          'paymentMethod',
+          'deliveryCity',
+          'deliveryAddress',
+          'deliveryNotes',
+          'meetupLocation',
+          'meetupTimeOption',
+          'meetupNotes',
+          'items',
+          'subtotal',
+          'appliedPromo',
+          'total',
+          'status',
+          'cancelReason',
+          'createdAt'
+        ])
+        && isShortString(data.fullName, 120)
+        && isShortString(data.telegramHandle, 80)
+        && data.note is string
+        && data.note.size() <= 1000
+        && isFulfillmentType(data.fulfillmentType)
+        && isPaymentMethod(data.paymentMethod)
+        && data.deliveryCity is string
+        && data.deliveryCity.size() <= 120
+        && data.deliveryAddress is string
+        && data.deliveryAddress.size() <= 240
+        && data.deliveryNotes is string
+        && data.deliveryNotes.size() <= 1000
+        && data.meetupLocation is string
+        && data.meetupLocation.size() <= 80
+        && data.meetupTimeOption is string
+        && data.meetupTimeOption.size() <= 80
+        && data.meetupNotes is string
+        && data.meetupNotes.size() <= 1000
+        && isOrderItemList(data.items)
+        && data.subtotal is number
+        && data.subtotal >= 0
+        && isAppliedPromo(data.appliedPromo)
+        && data.total is number
+        && data.total >= 0
+        && isOrderStatus(data.status)
+        && data.cancelReason is string
+        && data.cancelReason.size() <= 500
+        && data.createdAt is timestamp
+        && (!('telegramUserId' in data) || data.telegramUserId == null || data.telegramUserId is int);
+    }
+
     match /products/{productId} {
       allow read: if true;
 
@@ -53,6 +170,21 @@ service cloud.firestore {
       // This is not real admin security yet because writes are not identity-protected.
       allow create, update: if isProductDocument(request.resource.data);
       allow delete: if true;
+    }
+
+    match /promoCodes/{promoCodeId} {
+      allow read: if true;
+      allow create, update: if isPromoDocument(request.resource.data);
+      allow delete: if true;
+    }
+
+    match /orders/{orderId} {
+      allow create: if isOrderDocument(request.resource.data);
+      allow update: if request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'cancelReason'])
+        && isOrderStatus(request.resource.data.status)
+        && request.resource.data.cancelReason is string
+        && request.resource.data.cancelReason.size() <= 500;
+      allow read: if true;
     }
   }
 }

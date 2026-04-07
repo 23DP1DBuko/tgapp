@@ -42,11 +42,101 @@ Notes:
 
 ## Later Collections
 
-Do not implement these yet, but keep them in mind:
+### `orders`
+
+Use this collection after checkout starts writing real order records.
+
+Document shape:
+
+```ts
+type OrderDocument = {
+  fullName: string
+  telegramHandle: string
+  telegramUserId?: number | null
+  note: string
+  fulfillmentType: 'delivery' | 'meetup'
+  paymentMethod: 'meetup_cash' | 'usdt'
+  deliveryCity: string
+  deliveryAddress: string
+  deliveryNotes: string
+  meetupLocation: string
+  meetupTimeOption: string
+  meetupNotes: string
+  items: {
+    productId: string
+    name: string
+    price: number
+    currency: 'EUR'
+    image: string | null
+  }[]
+  subtotal: number
+  appliedPromo: {
+    code: string
+    discountType: 'percentage' | 'fixed_amount'
+    discountValue: number
+    discountAmount: number
+  } | null
+  total: number
+  status: 'new' | 'waiting_for_payment' | 'paid' | 'ready_for_meetup' | 'completed' | 'cancelled'
+  cancelReason: string
+  createdAt: Timestamp
+}
+```
+
+Notes:
+- `items` stores a snapshot of the purchased product data at checkout time.
+- `fulfillmentType` decides whether this order is for delivery or meetup.
+- `paymentMethod` stores how the buyer expects to pay after checkout.
+- Delivery fields stay empty for meetup orders.
+- Meetup fields stay empty for delivery orders.
+- `subtotal` stores the amount before promo discounts.
+- `appliedPromo` stores the exact promo snapshot used at checkout, if any.
+- `status` starts as `new` for meetup cash orders and `waiting_for_payment` for USDT orders.
+- `cancelReason` stays empty unless the admin cancels the order.
+- `telegramUserId` is optional because browser dev mode may not have Telegram user data.
+
+## Later Collections
+
+Keep these in mind after products and orders are stable:
 - `categories`
 - `promoCodes`
-- `orders`
 - `dropSubscriptions`
+
+### `promoCodes`
+
+Use this collection once checkout supports applying discount codes.
+
+Document shape:
+
+```ts
+type PromoCodeDocument = {
+  code: string
+  discountType: 'percentage' | 'fixed_amount'
+  discountValue: number
+  isActive: boolean
+  expiresAt?: Timestamp | null
+  usageLimit?: number | null
+}
+```
+
+Notes:
+- Store `code` in uppercase like `DROP10`.
+- `percentage` uses `discountValue` as a percent like `10`.
+- `fixed_amount` uses `discountValue` as a currency amount like `15`.
+- `usageLimit` is validated on read, but it is not decremented yet in this MVP step.
+
+## Example Promo Code Document
+
+```json
+{
+  "code": "DROP10",
+  "discountType": "percentage",
+  "discountValue": 10,
+  "isActive": true,
+  "expiresAt": null,
+  "usageLimit": null
+}
+```
 
 ## Example Product Document
 

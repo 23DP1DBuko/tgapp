@@ -6,7 +6,7 @@ service firebase.storage {
       allow create, update: if request.resource != null
         && request.resource.contentType.matches('image/.*')
         && request.resource.size < 5 * 1024 * 1024;
-      allow delete: if false;
+      allow delete: if true;
     }
 
     match /{allPaths=**} {

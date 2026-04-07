@@ -1,4 +1,5 @@
 import {
+  deleteObject,
   getDownloadURL,
   getStorage,
   ref,
@@ -38,4 +39,19 @@ export async function uploadProductImages(files: File[]): Promise<string[]> {
   })
 
   return Promise.all(uploads)
+}
+
+export async function deleteProductImages(imageUrls: string[]): Promise<void> {
+  const storage = getFirebaseStorage()
+
+  if (!storage || imageUrls.length === 0) {
+    return
+  }
+
+  await Promise.all(
+    imageUrls.map(async (imageUrl) => {
+      const imageRef = ref(storage, imageUrl)
+      await deleteObject(imageRef)
+    }),
+  )
 }

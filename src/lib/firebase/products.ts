@@ -115,6 +115,27 @@ export async function updateProduct(
   })
 }
 
+export async function updateProductAvailability(
+  productId: string,
+  isAvailable: boolean,
+): Promise<void> {
+  const db = getFirestoreDb()
+
+  if (!db) {
+    throw new Error('Firebase is not configured yet.')
+  }
+
+  await updateDoc(doc(db, 'products', productId), {
+    isAvailable,
+  })
+}
+
+export async function markProductsAsSold(productIds: string[]): Promise<void> {
+  await Promise.all(
+    productIds.map((productId) => updateProductAvailability(productId, false)),
+  )
+}
+
 export async function deleteProduct(productId: string): Promise<void> {
   const db = getFirestoreDb()
 
@@ -123,4 +144,10 @@ export async function deleteProduct(productId: string): Promise<void> {
   }
 
   await deleteDoc(doc(db, 'products', productId))
+}
+
+export async function deleteSoldProducts(products: Product[]): Promise<void> {
+  const soldProducts = products.filter((product) => !product.isAvailable)
+
+  await Promise.all(soldProducts.map((product) => deleteProduct(product.id)))
 }
