@@ -6,45 +6,47 @@ This file gives **Codex in VS Code** strict guidance for working on this reposit
 
 ## 1. Mission
 
-You are helping build a **Telegram Mini App** for a small streetwear store.
+You are helping maintain and extend a **Telegram Mini App** for a small streetwear store.
 
 The app is **not** a giant marketplace.
 It is a **small, controlled, community-focused drop app** for limited items.
 
 Main goals:
-- build the app **step by step**
+- improve the app **step by step**
 - keep the code understandable for a beginner/intermediate developer
 - prefer **small tasks** over large code dumps
 - always explain what changed and how to verify it
 - do not hide important logic behind magic abstractions
+- respect the existing implementation before proposing rewrites
 
 ---
 
 ## 2. Current stack
 
 The current frontend stack is:
+
 - **React 19**
 - **TypeScript**
 - **Vite**
 - **Tailwind CSS v4**
 - **ESLint**
-- **Firebase** (already chosen for backend services)
+- **Firebase**
 
-Package baseline:
-- React + React DOM
-- TypeScript
-- Vite
-- Tailwind
-- ESLint
+Firebase is already part of the application architecture and may include:
 
-Assume this is a **frontend-first** project using Firebase for:
 - authentication
-- database / data storage
-- optional file storage
-- optional hosting later
+- Firestore
+- Storage
+- server-side verification logic
+- optional hosting
 
-If Firebase packages are missing, do **not** silently redesign the stack.
-Instead, propose the minimal required Firebase additions and explain why.
+Codex must work **with the existing stack**.
+Do not silently redesign the project or swap platforms.
+
+If a package is missing for a requested task:
+- propose the **smallest necessary addition**
+- explain why it is needed
+- do not introduce multiple libraries when one simple solution is enough
 
 ---
 
@@ -61,17 +63,21 @@ Expected product characteristics:
 - mobile-first
 - Telegram-native feeling
 
-Planned core features:
-- product list
+Core product areas that may already exist in the codebase:
+- product catalog
 - categories
-- product page
+- product detail page
 - multiple product images
 - cart
-- promo code input
+- promo code validation
 - checkout flow
-- notify-me / drop notification system
-- wishlist later
-- admin-controlled broadcasts later
+- order creation
+- order status management
+- wishlist
+- admin panel
+- product CRUD
+- image upload
+- Telegram auth / Telegram init data handling
 
 Not a priority right now:
 - AI recommendations
@@ -81,6 +87,7 @@ Not a priority right now:
 - gamification
 - complex marketplace logic
 - shipping provider integrations
+- unnecessary third-party services
 
 ---
 
@@ -90,6 +97,8 @@ Not a priority right now:
 
 Codex must:
 - work in **small steps only**
+- inspect existing code before suggesting changes
+- treat **source code as the source of truth**
 - explain each change before or after making it
 - keep the project easy to debug
 - prefer explicit code over clever code
@@ -104,6 +113,7 @@ Codex must **not**:
 - invent backend infrastructure outside Firebase unless asked
 - add features that were not requested
 - overengineer the app
+- assume old planning docs are still accurate without checking code
 
 ### After every coding task, always provide:
 1. what was changed
@@ -124,27 +134,49 @@ Break all work into:
 - tasks
 - micro-tasks
 
-Example:
-- Phase 1: foundation
-  - Task 1.1: project structure
-  - Task 1.2: Firebase initialization
-  - Task 1.3: Telegram SDK bootstrap
-- Phase 2: catalog
-  - Task 2.1: product type definition
-  - Task 2.2: Firestore collection design
-  - Task 2.3: product list UI
+Prefer:
+- fix one bug
+- improve one flow
+- refactor one module
+- tighten one security rule
+- add one missing route
+- document one subsystem
 
-Never jump several phases ahead.
+Avoid bundling unrelated work into one step.
 
 ### Verification rule
 
 Every task must have verification.
+
 Examples:
 - “run `npm run dev` and confirm the page loads without TypeScript errors”
-- “open browser console and confirm Telegram user object is logged”
-- “add a test product to Firestore and confirm it appears in the UI”
+- “run `npm run build` and confirm production build succeeds”
+- “create a test product and confirm it appears in the catalog”
+- “apply a promo code and confirm totals update correctly”
+- “submit checkout and confirm the order document is written to Firestore”
+- “log in as admin and confirm protected admin actions are accessible”
+- “open outside Telegram and confirm the dev fallback still works”
 
 If there is no verification path, the task is incomplete.
+
+### Audit-first rule
+
+Before changing code, Codex should first determine:
+- what already exists
+- what is complete
+- what is partial
+- what is broken
+- what is duplicated
+- what is outdated in documentation
+
+Do not propose “build X” if X already exists.
+Propose:
+- extend X
+- fix X
+- refactor X
+- secure X
+- document X
+only after inspecting it.
 
 ---
 
@@ -172,13 +204,18 @@ npm run build
 npm run lint
 ```
 
+If tests exist, also use the project’s test command.
 When suggesting new packages, always show the exact install command.
 
 ---
 
 ## 7. Architecture expectations
 
-Codex should guide the app toward this structure, unless the user explicitly changes direction.
+Codex should guide the app toward a clean and understandable structure.
+Use the existing structure if it is already working.
+Only refactor structure when there is a clear benefit.
+
+Preferred structure:
 
 ```text
 src/
@@ -190,13 +227,16 @@ src/
     layout/
     product/
     cart/
+    admin/
   features/
     auth/
     products/
     cart/
     promo/
     checkout/
+    wishlist/
     notifications/
+    admin/
   hooks/
   lib/
     firebase/
@@ -208,13 +248,24 @@ src/
 ```
 
 ### Folder principles
+
 - `components/ui` = reusable buttons, inputs, modals, badges
+- `components/layout` = shell, navigation, headers, wrappers
 - `features/*` = business logic grouped by domain
-- `lib/firebase` = Firebase config and wrappers
-- `lib/telegram` = Telegram Mini App helpers
+- `lib/firebase` = Firebase config, queries, wrappers, helpers
+- `lib/telegram` = Telegram Mini App helpers and verification-related client utilities
 - `types` = shared TypeScript types
+- `pages` = route-level screens if routing is used
 
 Do not create random folders without reason.
+
+### Refactor rule
+
+If the current structure is messy:
+- do not rewrite it all at once
+- identify the worst pain point
+- move one slice at a time
+- keep imports and verification easy to follow
 
 ---
 
@@ -230,6 +281,7 @@ Rules:
 - use consistent spacing scale
 - do not hardcode random colors in every component
 - prefer tokens / shared classes / reusable variants
+- keep product imagery more prominent than interface chrome
 
 Before making major visual decisions, discuss with the user:
 - color palette
@@ -238,18 +290,21 @@ Before making major visual decisions, discuss with the user:
 - button shape
 
 ### Styling principles
+
 - mobile-first
 - clean
 - minimal
 - calm
 - fashion/streetwear appropriate
-- product images should stand out more than interface chrome
+- Telegram-friendly
+- admin UI should still feel part of the same product
 
 Avoid:
 - visual chaos
 - too many accent colors
 - exaggerated animations
 - per-component styling systems that are hard to maintain
+- inconsistent admin vs storefront styling
 
 ---
 
@@ -258,24 +313,40 @@ Avoid:
 Firebase is already chosen.
 Codex must work **with Firebase**, not against it.
 
-Likely Firebase services to use:
-- **Firebase Auth** for user auth
-- **Cloud Firestore** for products, promos, orders, notify-me flags
-- **Firebase Storage** for product images if needed
-- **Firebase Hosting** only later if requested
+Likely services used in this project:
+- **Firebase Auth**
+- **Cloud Firestore**
+- **Firebase Storage**
+- **Cloud Functions** or other Firebase-backed server logic for verification tasks
+- **Firebase Hosting** only if the project uses it
 
-When designing Firebase usage:
+When working with Firebase:
 - keep collections simple
-- explain document shape before implementing
-- explain security rules conceptually
-- do not write complex rules too early
-- do not use Firebase features just because they exist
+- inspect current document shapes before changing them
+- explain document shape changes before implementing them
+- explain security rules conceptually when touching them
+- avoid unnecessary schema churn
+- keep backward compatibility in mind when changing live data models
 
-Before implementing Firestore models, first propose:
-- collections
-- document shape
-- relation strategy
+Before changing Firestore models, first explain:
+- current shape
+- proposed shape
+- migration impact
 - fields needed now vs later
+
+### Security-sensitive Firebase areas
+
+Treat these carefully:
+- auth flows
+- admin role checks
+- Firestore rules
+- Storage rules
+- promo code validation
+- order creation
+- Telegram identity linkage
+- server-side verification logic
+
+Never casually weaken security rules for convenience.
 
 ---
 
@@ -286,9 +357,10 @@ This project must work well inside Telegram.
 Codex should account for:
 - mobile viewport
 - Telegram WebApp initialization
-- Telegram theme integration later
-- optional access to Telegram user data
+- Telegram theme integration
+- Telegram user data access
 - safe fallbacks when opened outside Telegram during dev
+- separation between client-side Telegram helpers and server-side verification
 
 Codex must not assume the app is always running inside Telegram during development.
 
@@ -296,19 +368,27 @@ When implementing Telegram logic:
 - always include a dev fallback
 - clearly separate Telegram-specific code into helpers
 - avoid scattering `window.Telegram` usage everywhere
+- do not trust client-provided Telegram identity for privileged actions without verification
 
 Preferred location:
 - `src/lib/telegram/`
+
+### Verification rule for Telegram auth
+
+If the task touches Telegram authentication or identity:
+- check whether init data is verified server-side
+- check how the verified identity is linked to Firebase auth or user records
+- do not replace secure verification with client-only shortcuts
 
 ---
 
 ## 11. Data model expectations
 
 These are likely data domains.
-Codex should not implement all at once, but should respect them when planning.
+Codex should respect existing models before proposing changes.
 
 ### Products
-A product may need:
+A product may include:
 - id
 - name
 - description
@@ -319,12 +399,16 @@ A product may need:
 - isAvailable
 - images[]
 - createdAt
-- isLimitedLabel (manual display label if needed)
+- updatedAt
+- isLimitedLabel
+- inventory or stock-related fields if used
+- sort/order fields if used in admin
 
 ### Categories
 - id
 - name
 - slug
+- optional image or label metadata
 
 ### Brands
 - id
@@ -338,75 +422,101 @@ A product may need:
 - isActive
 - expiresAt
 - usageLimit
+- usageCount if tracked
+- minimum order conditions if used
+
+### Orders
+- customer identity fields
+- Telegram-related fields if used
+- items snapshot
+- subtotal
+- discount data
+- total
+- status
+- fulfillment fields
+- payment fields
+- timestamps
+
+### Wishlist
+- userId
+- product references or snapshots
 
 ### Notify-me / subscriptions
 - userId
 - isSubscribedToDrops
-- optional product-specific interests later
+- optional product-specific subscriptions later
+
+### Admin
+- role or claims model
+- permission checks
+- protected product/order/promo operations
 
 ### Cart
-At MVP stage, cart can stay client-side first.
-Do not overcomplicate cart persistence unless requested.
+Cart may remain client-side if that is the chosen architecture.
+Do not overcomplicate persistence unless requested.
 
 ---
 
-## 12. What to build first
+## 12. Current priority order
 
-Codex must prioritize in this order unless the user changes it.
+Codex must **not** assume the repo is still in setup phase.
+Many core features may already be implemented.
 
-# Phase 0 — Setup and alignment
+Use this order unless the user changes direction.
+
+# Phase 0 — Audit and alignment
 1. inspect current repo
 2. explain what already exists
-3. identify missing Firebase packages if any
-4. confirm desired architecture
-5. create or improve folder structure carefully
+3. identify what is complete vs partial vs broken
+4. identify outdated docs
+5. confirm the next smallest useful task
 
-# Phase 1 — Foundation
-1. Firebase initialization
-2. environment variable setup
-3. Telegram Mini App bootstrap helper
-4. app shell / layout
-5. shared UI primitives
+# Phase 1 — Stabilization
+1. fix broken flows
+2. reduce duplication
+3. improve route structure if needed
+4. improve shared UI consistency
+5. tighten type safety
 
-# Phase 2 — Product data foundation
-1. TypeScript product types
-2. Firestore schema proposal
-3. seed / manual test data plan
-4. product fetching hook
-5. product list screen
+# Phase 2 — Security and correctness
+1. review Telegram init data verification
+2. review Firebase auth flow
+3. review Firestore rules
+4. review Storage rules
+5. review admin permission enforcement
+6. review promo and order validation paths
 
-# Phase 3 — Product experience
-1. category filtering
-2. product detail page
-3. image gallery
-4. availability handling
+# Phase 3 — Product flow improvements
+1. catalog UX improvements
+2. filtering/search improvements
+3. product detail improvements
+4. cart and checkout UX polish
+5. order status UX improvements
+6. wishlist / notify-me cleanup if needed
 
-# Phase 4 — Cart and promo flow
-1. cart state
-2. add/remove from cart
-3. cart drawer/modal/page
-4. promo code field UI
-5. promo validation strategy
+# Phase 4 — Admin improvements
+1. improve product CRUD UX
+2. improve order management
+3. improve promo management
+4. improve upload flow
+5. add missing admin safeguards
 
-# Phase 5 — Checkout MVP
-1. checkout page structure
-2. buyer info capture if needed
-3. order creation in Firestore
-4. mock payment / manual payment flow
-5. order success screen
+# Phase 5 — Architecture cleanup
+1. routing improvements
+2. folder cleanup
+3. extract reusable hooks/services
+4. remove dead code
+5. improve docs to match real implementation
 
-# Phase 6 — Telegram-centric growth features
-1. notify-me subscriptions
-2. admin-triggered announcement design
-3. optional secret promo delivery later
+# Phase 6 — Production readiness
+1. env validation
+2. error handling
+3. loading and empty states
+4. test coverage where useful
+5. release checklist
+6. deployment readiness
 
-# Phase 7 — Admin tools
-1. lightweight admin access plan
-2. product create/edit/delete
-3. promo create/edit
-4. notification sending plan
-
-Do not skip to advanced features before foundation is stable.
+Do not restart the project from scratch if the app already works.
 
 ---
 
@@ -419,36 +529,43 @@ Do not push these early:
 - multi-language support
 - currency conversion
 - public activity feed
-- analytics dashboards
+- analytics dashboards unless explicitly requested
 - recommendation engine
-- advanced role systems
+- advanced role systems beyond what the project actually needs
 
-These can be discussed later, but they are **not MVP**.
+These can be discussed later, but they are **not MVP / not current priority**.
 
 ---
 
 ## 14. How to respond to tasks
 
-When the user asks for help, use this format whenever possible:
+When the user asks for help, use this format whenever possible.
 
 ### A. Task summary
 - what the task is
-- what phase it belongs to
+- whether it is a bug fix, feature extension, refactor, security task, or documentation task
+- what area it belongs to
 
-### B. Plan
+### B. Current state
+- what already exists
+- what is missing or wrong
+- what assumptions were verified from code
+
+### C. Plan
 - smallest possible steps
 
-### C. Implementation
+### D. Implementation
 - files to create/edit
 - exact commands if needed
 
-### D. Verification
+### E. Verification
 - how to test manually
 - expected result
 
-### E. Risks / notes
+### F. Risks / notes
 - what can go wrong
 - what to watch out for
+- whether docs may also need updates
 
 This keeps the project understandable.
 
@@ -465,6 +582,7 @@ The user does **not** want:
 - random visual decisions without discussion
 - every button styled differently
 - overdesigned components that fight the product
+- blind trust in outdated planning docs
 
 Keep the project educational and maintainable.
 
@@ -478,9 +596,17 @@ Codex should help maintain:
 - `PROJECT_STRUCTURE.md` — explanation of folders/files
 - `FIREBASE_SCHEMA.md` — collections and document shapes
 - `UI_GUIDELINES.md` — design tokens, components, shared styles
+- `SECURITY_PLAN.md` if security architecture is documented
 
 If one of these is missing and becomes useful, propose creating it.
 Do not create all docs at once unless asked.
+
+### Documentation rule
+
+If code and docs disagree:
+- trust the code first
+- then propose doc updates
+- clearly mark which docs are outdated
 
 ---
 
@@ -488,14 +614,16 @@ Do not create all docs at once unless asked.
 
 Good:
 - “First I will inspect the current folder structure.”
-- “We need Firebase packages. Install them with this command.”
-- “Let’s create `src/lib/firebase/config.ts` first.”
-- “After this, run `npm run dev` and confirm there are no TypeScript errors.”
+- “This feature already exists, so I’ll review the implementation before changing it.”
+- “The checkout flow is present, but promo validation should be tightened here.”
+- “Let’s fix the routing structure in one small step.”
+- “After this, run `npm run build` and confirm there are no TypeScript errors.”
 
 Bad:
 - “I rewrote your app into Next.js + Zustand + Supabase.”
 - “I added 15 packages.”
-- “I created the full admin dashboard in one step.”
+- “I replaced the existing auth flow without checking how admin access works.”
+- “I assumed the docs were correct.”
 - “Trust me, this is standard.”
 
 ---
@@ -505,8 +633,9 @@ Bad:
 When starting work in this repository, Codex should first:
 1. summarize the current project state
 2. identify what already exists
-3. identify the next smallest useful task
-4. ask for confirmation if the next task changes architecture
+3. identify what is incomplete, risky, or outdated
+4. identify the next smallest useful task
+5. ask for confirmation if the next task changes architecture
 
 ---
 
@@ -517,6 +646,7 @@ If a task feels too big:
 - reduce scope
 - keep the code easy to understand
 - prefer clarity over speed
+- preserve working behavior while refactoring
 
 The user wants to **learn while building**.
 That is more important than fast code generation.

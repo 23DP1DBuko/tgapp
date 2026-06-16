@@ -51,6 +51,8 @@ service cloud.firestore {
           'price',
           'currency',
           'isAvailable',
+          'likesCount',
+          'cartCount',
           'images',
           'createdAt',
           'isLimitedLabel'
@@ -64,6 +66,10 @@ service cloud.firestore {
         && data.price <= 100000
         && data.currency == 'EUR'
         && data.isAvailable is bool
+        && data.likesCount is number
+        && data.likesCount >= 0
+        && data.cartCount is number
+        && data.cartCount >= 0
         && isStringList(data.images, 8, 2000)
         && data.createdAt is timestamp
         && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80));
@@ -165,26 +171,19 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if true;
-
-      // MVP baseline: keep the current admin panel working while still validating shape.
-      // This is not real admin security yet because writes are not identity-protected.
-      allow create, update: if isProductDocument(request.resource.data);
-      allow delete: if true;
+      allow create, delete: if false;
+      allow update: if false;
     }
 
     match /promoCodes/{promoCodeId} {
       allow read: if true;
-      allow create, update: if isPromoDocument(request.resource.data);
-      allow delete: if true;
+      allow create, update, delete: if false;
     }
 
     match /orders/{orderId} {
-      allow create: if isOrderDocument(request.resource.data);
-      allow update: if request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'cancelReason'])
-        && isOrderStatus(request.resource.data.status)
-        && request.resource.data.cancelReason is string
-        && request.resource.data.cancelReason.size() <= 500;
-      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow read: if false;
     }
   }
 }

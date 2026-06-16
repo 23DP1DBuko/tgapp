@@ -1,36 +1,30 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { listOrders, updateOrderStatus } from '../../lib/firebase/orders'
 import type { Order } from '../../types/order'
 
 type OrderAdminPanelProps = {
   isEnabled: boolean
+  initData: string
 }
 
-export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
+export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
   const [orders, setOrders] = useState<Order[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null)
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [orderView, setOrderView] = useState<
     'all' | 'with_promo' | 'without_promo' | Order['status']
   >('all')
 
-  useEffect(() => {
-    if (!isEnabled) {
-      return
-    }
-
-    void reloadOrders()
-  }, [isEnabled])
-
-  async function reloadOrders() {
+  const reloadOrders = useCallback(async () => {
     setIsLoading(true)
     setErrorMessage(null)
 
     try {
-      const nextOrders = await listOrders()
+      const nextOrders = await listOrders(initData)
       setOrders(nextOrders)
     } catch (error) {
       setErrorMessage(
@@ -39,23 +33,46 @@ export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [initData])
+
+  useEffect(() => {
+    if (!isEnabled) {
+      return
+    }
+
+    void reloadOrders()
+  }, [isEnabled, reloadOrders])
 
   const filteredOrders = useMemo(() => {
+    let nextOrders = orders
+
     if (orderView === 'with_promo') {
-      return orders.filter((order) => order.appliedPromo !== null)
+      nextOrders = nextOrders.filter((order) => order.appliedPromo !== null)
+    } else if (orderView === 'without_promo') {
+      nextOrders = nextOrders.filter((order) => order.appliedPromo === null)
+    } else if (orderView !== 'all') {
+      nextOrders = nextOrders.filter((order) => order.status === orderView)
     }
 
-    if (orderView === 'without_promo') {
-      return orders.filter((order) => order.appliedPromo === null)
+    const normalizedSearch = searchQuery.trim().toLowerCase()
+
+    if (!normalizedSearch) {
+      return nextOrders
     }
 
-    if (orderView !== 'all') {
-      return orders.filter((order) => order.status === orderView)
-    }
+    return nextOrders.filter((order) => {
+      const searchableParts = [
+        order.fullName,
+        order.telegramHandle,
+        order.id,
+        order.items.map((item) => item.name).join(' '),
+      ]
 
-    return orders
-  }, [orderView, orders])
+      return searchableParts.some((part) =>
+        part.toLowerCase().includes(normalizedSearch),
+      )
+    })
+  }, [orderView, orders, searchQuery])
 
   const totalRevenue = useMemo(
     () => orders.reduce((sum, order) => sum + order.total, 0),
@@ -65,19 +82,16 @@ export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
     () => orders.filter((order) => order.appliedPromo !== null).length,
     [orders],
   )
-  const todayOrdersCount = useMemo(() => {
-    const today = new Date()
+  const recentOrdersCount = useMemo(() => {
+    const now = Date.now()
+    const oneDayInMs = 24 * 60 * 60 * 1000
 
     return orders.filter((order) => {
       if (!order.createdAt) {
         return false
       }
 
-      return (
-        order.createdAt.getFullYear() === today.getFullYear()
-        && order.createdAt.getMonth() === today.getMonth()
-        && order.createdAt.getDate() === today.getDate()
-      )
+      return now - order.createdAt.getTime() <= oneDayInMs
     }).length
   }, [orders])
   const groupedOrders = useMemo(
@@ -116,7 +130,7 @@ export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
     setErrorMessage(null)
 
     try {
-      await updateOrderStatus(order.id, status, cancelReason)
+      await updateOrderStatus(initData, order.id, status, cancelReason)
       await reloadOrders()
     } catch (error) {
       setErrorMessage(
@@ -179,6 +193,15 @@ export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
+            <label className="min-w-[14rem] flex-1">
+              <span className="sr-only">Search orders</span>
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="w-full rounded-full border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]"
+                placeholder="Search buyer, @handle, order ID, item..."
+              />
+            </label>
             {(
               [
                 'all',
@@ -212,7 +235,7 @@ export function OrderAdminPanel({ isEnabled }: OrderAdminPanelProps) {
               </button>
             ))}
             <span className="rounded-full bg-white/6 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
-              Today {todayOrdersCount}
+              Last 24h {recentOrdersCount}
             </span>
           </div>
         </>

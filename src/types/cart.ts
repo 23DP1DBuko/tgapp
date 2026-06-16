@@ -22,3 +22,11 @@ export type CheckoutForm = {
   meetupTimeOption: string
   meetupNotes: string
 }
+
+export type CheckoutSuccessSnapshot = {
+  items: CartItem[]
+  form: CheckoutForm
+  total: number
+}
+
+export type CheckoutSubmitState = 'idle' | 'submitting'

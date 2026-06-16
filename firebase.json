@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "source": "functions"
+  },
   "firestore": {
     "rules": "firestore.rules"
   },
@@ -13,6 +16,97 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      {
+        "source": "/api/verifyTelegramAdmin",
+        "function": {
+          "functionId": "verifyTelegramAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/updateOrderStatus",
+        "function": {
+          "functionId": "updateOrderStatusAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/listOrders",
+        "function": {
+          "functionId": "listOrdersAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/orders/listMine",
+        "function": {
+          "functionId": "listBuyerOrders",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/upsertPromoCode",
+        "function": {
+          "functionId": "upsertPromoCodeAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deletePromoCodes",
+        "function": {
+          "functionId": "deletePromoCodesAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/upsertProduct",
+        "function": {
+          "functionId": "upsertProductAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deleteProducts",
+        "function": {
+          "functionId": "deleteProductsAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/checkout/createOrder",
+        "function": {
+          "functionId": "createCheckoutOrder",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/products/updateSignal",
+        "function": {
+          "functionId": "updateProductSignal",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/uploadProductImage",
+        "function": {
+          "functionId": "uploadProductImageAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deleteProductImages",
+        "function": {
+          "functionId": "deleteProductImagesAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/telegram/webhook",
+        "function": {
+          "functionId": "telegramBotWebhook",
+          "region": "us-central1"
+        }
+      },
       {
         "source": "**",
         "destination": "/index.html"

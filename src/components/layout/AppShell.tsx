@@ -33,7 +33,7 @@ export function AppShell({
           <div className="mt-5 flex items-start justify-between gap-4">
             <div className="max-w-[16rem]">
               <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                Streetwear Drop App
+                Limited Streetwear Drop
               </p>
               <h1 className="mt-3 text-4xl font-semibold leading-none tracking-[-0.04em] text-[var(--shop-cream)]">
                 {title}
@@ -52,9 +52,9 @@ export function AppShell({
               </span>
               <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(139,61,255,0.35),rgba(217,31,111,0.16))] px-4 py-3 text-right shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-white/70">
-                  Brand Mark
+                  Drop Signal
                 </p>
-                <p className="mt-1 text-3xl leading-none text-[var(--shop-cream)]">Heart</p>
+                <p className="mt-1 text-3xl leading-none text-[var(--shop-cream)]">YW</p>
               </div>
             </div>
           </div>

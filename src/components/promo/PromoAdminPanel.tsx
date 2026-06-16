@@ -15,6 +15,7 @@ import {
 
 type PromoAdminPanelProps = {
   isEnabled: boolean
+  initData: string
 }
 
 type PromoFormState = {
@@ -35,7 +36,7 @@ const initialFormState: PromoFormState = {
   usageLimit: '',
 }
 
-export function PromoAdminPanel({ isEnabled }: PromoAdminPanelProps) {
+export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
   const [promos, setPromos] = useState<PromoCode[]>([])
   const [selectedPromoId, setSelectedPromoId] = useState<string>('new')
   const [form, setForm] = useState<PromoFormState>(initialFormState)
@@ -136,9 +137,9 @@ export function PromoAdminPanel({ isEnabled }: PromoAdminPanelProps) {
       }
 
       if (selectedPromo) {
-        await updatePromoCode(selectedPromo.id, payload)
+        await updatePromoCode(initData, selectedPromo.id, payload)
       } else {
-        await createPromoCode(payload)
+        await createPromoCode(initData, payload)
       }
 
       setFeedbackTone('success')
@@ -172,7 +173,7 @@ export function PromoAdminPanel({ isEnabled }: PromoAdminPanelProps) {
     setFeedbackMessage(null)
 
     try {
-      await deletePromoCode(selectedPromo.id)
+      await deletePromoCode(initData, selectedPromo.id)
       setFeedbackTone('success')
       setFeedbackMessage('Promo code deleted.')
       resetForm()
@@ -204,7 +205,7 @@ export function PromoAdminPanel({ isEnabled }: PromoAdminPanelProps) {
     setFeedbackMessage(null)
 
     try {
-      await deleteInactivePromoCodes(promos)
+      await deleteInactivePromoCodes(initData, promos)
       setFeedbackTone('success')
       setFeedbackMessage('Inactive promo codes deleted.')
       resetForm()

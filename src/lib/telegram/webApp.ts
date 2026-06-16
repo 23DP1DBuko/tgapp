@@ -19,6 +19,7 @@ export type TelegramThemeParams = {
 
 export type TelegramWebAppState = {
   isTelegram: boolean
+  initData: string
   user?: TelegramUser
   theme: TelegramThemeParams
 }
@@ -40,6 +41,7 @@ export function getTelegramWebAppState(): TelegramWebAppState {
 
   return {
     isTelegram: Boolean(webApp),
+    initData: webApp?.initData ?? '',
     user: webApp?.initDataUnsafe?.user,
     theme: {
       ...fallbackTheme,

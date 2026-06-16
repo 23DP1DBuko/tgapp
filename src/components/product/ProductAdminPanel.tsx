@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   PRODUCT_CATEGORIES,
@@ -17,6 +17,7 @@ import {
 } from '../../lib/firebase/storage'
 
 type ProductAdminPanelProps = {
+  initData: string
   products: Product[]
   onProductsChanged: () => void
 }
@@ -55,6 +56,7 @@ const initialFormState: ProductFormState = {
 }
 
 export function ProductAdminPanel({
+  initData,
   products,
   onProductsChanged,
 }: ProductAdminPanelProps) {
@@ -66,6 +68,10 @@ export function ProductAdminPanel({
   const [removedExistingImageUrls, setRemovedExistingImageUrls] = useState<string[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string>('new')
   const [productView, setProductView] = useState<'all' | 'available' | 'sold'>('all')
+  const [activeDraggedGalleryItemId, setActiveDraggedGalleryItemId] = useState<string | null>(
+    null,
+  )
+  const dragPointerIdRef = useRef<number | null>(null)
 
   const selectedProduct =
     selectedProductId === 'new'
@@ -164,7 +170,10 @@ export function ProductAdminPanel({
       )
       const uploadedImageUrls =
         pendingGalleryItems.length > 0
-          ? await uploadProductImages(pendingGalleryItems.map((item) => item.file))
+          ? await uploadProductImages(
+              initData,
+              pendingGalleryItems.map((item) => item.file),
+            )
           : []
       let uploadedImageIndex = 0
       const nextImages = galleryItems.flatMap((item) => {
@@ -178,6 +187,12 @@ export function ProductAdminPanel({
         return uploadedImageUrl ? [uploadedImageUrl] : []
       })
 
+      if (nextImages.length === 0) {
+        setFeedbackTone('error')
+        setFeedbackMessage('At least one product image is required before saving.')
+        return
+      }
+
       const payload = {
         name: trimmedName,
         description: trimmedDescription,
@@ -190,10 +205,10 @@ export function ProductAdminPanel({
       }
 
       if (selectedProduct) {
-        await updateProduct(selectedProduct.id, payload)
-        await deleteProductImages(removedExistingImageUrls)
+        await updateProduct(initData, selectedProduct.id, payload)
+        await deleteProductImages(initData, removedExistingImageUrls)
       } else {
-        await createProduct(payload)
+        await createProduct(initData, payload)
       }
 
       if (selectedProduct) {
@@ -239,8 +254,8 @@ export function ProductAdminPanel({
     setFeedbackMessage(null)
 
     try {
-      await deleteProductImages(selectedProduct.images)
-      await deleteProduct(selectedProduct.id)
+      await deleteProductImages(initData, selectedProduct.images)
+      await deleteProduct(initData, selectedProduct.id)
       resetToCreateMode()
       setFeedbackTone('success')
       setFeedbackMessage('Product and its saved Storage images were deleted.')
@@ -274,8 +289,8 @@ export function ProductAdminPanel({
     try {
       const soldProductImages = soldProducts.flatMap((product) => product.images)
 
-      await deleteProductImages(soldProductImages)
-      await deleteSoldProducts(products)
+      await deleteProductImages(initData, soldProductImages)
+      await deleteSoldProducts(initData, products)
       resetToCreateMode()
       setFeedbackTone('success')
       setFeedbackMessage('All sold products and their saved Storage images were deleted.')
@@ -333,6 +348,41 @@ export function ProductAdminPanel({
     })
   }
 
+  function handleGalleryPointerStart(itemId: string, pointerId: number) {
+    dragPointerIdRef.current = pointerId
+    setActiveDraggedGalleryItemId(itemId)
+  }
+
+  function handleGalleryPointerMove(clientX: number, clientY: number) {
+    if (!activeDraggedGalleryItemId) {
+      return
+    }
+
+    const dropTarget = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(
+      '[data-gallery-item-id]',
+    )
+    const targetItemId = dropTarget?.dataset.galleryItemId
+
+    if (!targetItemId || targetItemId === activeDraggedGalleryItemId) {
+      return
+    }
+
+    const fromIndex = galleryItems.findIndex((item) => item.id === activeDraggedGalleryItemId)
+    const toIndex = galleryItems.findIndex((item) => item.id === targetItemId)
+
+    if (fromIndex === -1 || toIndex === -1) {
+      return
+    }
+
+    handleMoveGalleryItem(fromIndex, toIndex)
+    setActiveDraggedGalleryItemId(targetItemId)
+  }
+
+  function handleGalleryPointerEnd() {
+    dragPointerIdRef.current = null
+    setActiveDraggedGalleryItemId(null)
+  }
+
   function handlePendingFileSelection(files: FileList | null) {
     if (!files) {
       return
@@ -353,14 +403,14 @@ export function ProductAdminPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Admin Panel
+            Product Admin
           </p>
           <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            Create, edit, and delete products directly from the app. This is intentionally simple and does not include admin auth yet.
+            Create, edit, and clean up products directly from the app with backend-verified admin access.
           </p>
         </div>
         <span className="rounded-full bg-[var(--shop-red)]/22 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-cream)]">
-          MVP
+          Live
         </span>
       </div>
 
@@ -497,7 +547,7 @@ export function ProductAdminPanel({
           </p>
           {galleryItems.length > 0 ? (
             <p className="mt-2 text-xs text-[var(--shop-muted)]">
-              Gallery items ready: {galleryItems.length}. Move, remove, and save to lock in the final order.
+              Gallery items ready: {galleryItems.length}. Press, move, and release the photo cards to lock in the right order before saving.
             </p>
           ) : null}
         </label>
@@ -513,8 +563,11 @@ export function ProductAdminPanel({
                   key={item.id}
                   item={item}
                   index={index}
-                  total={galleryItems.length}
-                  onMove={handleMoveGalleryItem}
+                  isDragging={activeDraggedGalleryItemId === item.id}
+                  dragPointerId={dragPointerIdRef.current}
+                  onPointerStart={handleGalleryPointerStart}
+                  onPointerMove={handleGalleryPointerMove}
+                  onPointerEnd={handleGalleryPointerEnd}
                   onRemoveExisting={handleRemoveExistingImage}
                   onRemovePending={handleRemovePendingImage}
                 />
@@ -606,8 +659,11 @@ const fileInputClassName =
 type PendingImageCardProps = {
   item: GalleryItem
   index: number
-  total: number
-  onMove: (fromIndex: number, toIndex: number) => void
+  isDragging: boolean
+  dragPointerId: number | null
+  onPointerStart: (itemId: string, pointerId: number) => void
+  onPointerMove: (clientX: number, clientY: number) => void
+  onPointerEnd: () => void
   onRemoveExisting: (imageUrl: string) => void
   onRemovePending: (itemId: string) => void
 }
@@ -615,8 +671,11 @@ type PendingImageCardProps = {
 function GalleryImageCard({
   item,
   index,
-  total,
-  onMove,
+  isDragging,
+  dragPointerId,
+  onPointerStart,
+  onPointerMove,
+  onPointerEnd,
   onRemoveExisting,
   onRemovePending,
 }: PendingImageCardProps) {
@@ -628,7 +687,40 @@ function GalleryImageCard({
       : item.file.name
 
   return (
-    <article className="overflow-hidden rounded-[20px] border border-white/10 bg-black/10">
+    <article
+      data-gallery-item-id={item.id}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId)
+        onPointerStart(item.id, event.pointerId)
+      }}
+      onPointerMove={(event) => {
+        if (dragPointerId !== event.pointerId) {
+          return
+        }
+
+        onPointerMove(event.clientX, event.clientY)
+      }}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+
+        onPointerEnd()
+      }}
+      onPointerCancel={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+
+        onPointerEnd()
+      }}
+      className={`overflow-hidden rounded-[20px] border bg-black/10 transition-opacity ${
+        isDragging
+          ? 'border-[var(--shop-red)] opacity-60 shadow-[0_0_0_2px_rgba(255,77,90,0.2)]'
+          : 'border-white/10'
+      }`}
+      style={{ touchAction: 'none' }}
+    >
       <div className="aspect-[3/4] w-full bg-black/20">
         <img
           src={imageSrc}
@@ -637,30 +729,20 @@ function GalleryImageCard({
         />
       </div>
       <div className="p-3">
-        <p className="truncate text-xs text-[var(--shop-muted)]">{imageName}</p>
-        <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]/70">
-          {item.kind === 'existing' ? 'Saved' : 'Pending'}
-        </p>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => onMove(index, index - 1)}
-            disabled={index === 0}
-            className="rounded-2xl border border-white/10 bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Move Left
-          </button>
-          <button
-            type="button"
-            onClick={() => onMove(index, index + 1)}
-            disabled={index === total - 1}
-            className="rounded-2xl border border-white/10 bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Move Right
-          </button>
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-xs text-[var(--shop-muted)]">{imageName}</p>
+          <span className="rounded-full bg-white/8 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]">
+            Move
+          </span>
         </div>
+        <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]/70">
+          {item.kind === 'existing' ? 'Saved' : 'Pending'} · Position {index + 1}
+        </p>
         <button
           type="button"
+          onPointerDown={(event) => {
+            event.stopPropagation()
+          }}
           onClick={() =>
             item.kind === 'existing'
               ? onRemoveExisting(item.imageUrl)

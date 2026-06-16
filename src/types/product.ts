@@ -19,6 +19,8 @@ export type Product = {
   price: number
   currency: 'EUR'
   isAvailable: boolean
+  likesCount: number
+  cartCount: number
   images: string[]
   createdAt: Timestamp | null
   isLimitedLabel?: string

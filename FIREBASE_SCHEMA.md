@@ -1,20 +1,25 @@
 # Firebase Schema
 
-This document describes the first Firestore shape for the Telegram Mini App MVP.
+This document describes the current Firestore shape for the Telegram Mini App.
 
 ## Goal
 
-Keep the data model small, explicit, and easy to edit manually while the storefront is still being built.
+Keep the data model small, explicit, and aligned with the current application code.
+Source code is the source of truth.
+This document should reflect the actual types used by the app, not older planning assumptions.
 
-## Collections To Start With
+---
+
+## Core collections
 
 ### `products`
 
-Use this collection first. It is enough to support:
-- product list
+This collection supports:
+- product catalog
 - product detail page
 - category filtering
 - manual availability control
+- shared storefront counters such as likes and cart activity
 
 Document shape:
 
@@ -27,24 +32,28 @@ type ProductDocument = {
   price: number
   currency: 'EUR'
   isAvailable: boolean
+  likesCount: number
+  cartCount: number
   images: string[]
-  createdAt: Timestamp
+  createdAt: Timestamp | null
   isLimitedLabel?: string
 }
 ```
 
 Notes:
-- Firestore document ID will act as the product `id` in the app.
-- `brandNames` stays as a string array for now to avoid adding a separate brands collection too early.
-- `createdAt` is stored as a Firestore timestamp.
-- `images` stores Firebase Storage download URLs and supports multiple product images from the start.
-- `isLimitedLabel` is optional and meant for manual labels like `1 of 1` or `Limited Drop`.
+- Firestore document ID acts as the product `id` in the app.
+- `brandNames` stays as a string array to avoid introducing a separate brands collection too early.
+- `createdAt` is stored as a Firestore timestamp and may be `null` in local or transitional states.
+- `likesCount` is a shared storefront signal for how many users liked the item.
+- `cartCount` is a shared storefront signal for how many users currently have the item in cart.
+- `images` stores Firebase Storage download URLs and supports multiple product images.
+- `isLimitedLabel` is optional and is used for manual labels such as `1 of 1` or `Limited Drop`.
 
-## Later Collections
+---
 
 ### `orders`
 
-Use this collection after checkout starts writing real order records.
+This collection stores checkout submissions written by the storefront.
 
 Document shape:
 
@@ -52,7 +61,7 @@ Document shape:
 type OrderDocument = {
   fullName: string
   telegramHandle: string
-  telegramUserId?: number | null
+  telegramUserId?: number
   note: string
   fulfillmentType: 'delivery' | 'meetup'
   paymentMethod: 'meetup_cash' | 'usdt'
@@ -79,32 +88,30 @@ type OrderDocument = {
   total: number
   status: 'new' | 'waiting_for_payment' | 'paid' | 'ready_for_meetup' | 'completed' | 'cancelled'
   cancelReason: string
-  createdAt: Timestamp
+  createdAt: Timestamp | null
 }
 ```
 
 Notes:
-- `items` stores a snapshot of the purchased product data at checkout time.
-- `fulfillmentType` decides whether this order is for delivery or meetup.
+- Firestore document ID acts as the order `id` in the app.
+- `items` stores a snapshot of the purchased cart items at checkout time.
+- Each item keeps `productId`, `name`, `price`, `currency`, and `image` so order history stays stable even if product data changes later.
+- `fulfillmentType` decides whether the order is for delivery or meetup.
 - `paymentMethod` stores how the buyer expects to pay after checkout.
-- Delivery fields stay empty for meetup orders.
-- Meetup fields stay empty for delivery orders.
+- Delivery fields remain empty for meetup orders.
+- Meetup fields remain empty for delivery orders.
 - `subtotal` stores the amount before promo discounts.
-- `appliedPromo` stores the exact promo snapshot used at checkout, if any.
+- `appliedPromo` stores the exact promo snapshot used during checkout, if any.
 - `status` starts as `new` for meetup cash orders and `waiting_for_payment` for USDT orders.
 - `cancelReason` stays empty unless the admin cancels the order.
-- `telegramUserId` is optional because browser dev mode may not have Telegram user data.
+- `telegramUserId` is optional because some dev or fallback flows may not have Telegram user data.
+- `createdAt` is stored as a Firestore timestamp and may be `null` in transitional app state before hydration.
 
-## Later Collections
-
-Keep these in mind after products and orders are stable:
-- `categories`
-- `promoCodes`
-- `dropSubscriptions`
+---
 
 ### `promoCodes`
 
-Use this collection once checkout supports applying discount codes.
+This collection stores promo codes used during checkout.
 
 Document shape:
 
@@ -114,18 +121,236 @@ type PromoCodeDocument = {
   discountType: 'percentage' | 'fixed_amount'
   discountValue: number
   isActive: boolean
-  expiresAt?: Timestamp | null
-  usageLimit?: number | null
+  expiresAt: Timestamp | null
+  usageLimit: number | null
 }
 ```
 
 Notes:
-- Store `code` in uppercase like `DROP10`.
+- Store `code` in uppercase, for example `DROP10`.
 - `percentage` uses `discountValue` as a percent like `10`.
 - `fixed_amount` uses `discountValue` as a currency amount like `15`.
-- `usageLimit` is validated on read, but it is not decremented yet in this MVP step.
+- `expiresAt` may be `null` when the promo has no expiration date.
+- `usageLimit` may be `null` when the promo has no hard limit.
+- If usage counting exists later, that should be documented explicitly instead of inferred.
 
-## Example Promo Code Document
+---
+
+## Supporting app types
+
+These types are used by the app and explain how Firestore data is consumed.
+
+### Product type
+
+```ts
+export const PRODUCT_CATEGORIES = [
+  'hoodies',
+  'tshirts',
+  'outerwear',
+  'accessories',
+  'other',
+] as const
+
+export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number]
+
+export type Product = {
+  id: string
+  name: string
+  description: string
+  category: ProductCategory
+  brandNames: string[]
+  price: number
+  currency: 'EUR'
+  isAvailable: boolean
+  likesCount: number
+  cartCount: number
+  images: string[]
+  createdAt: Timestamp | null
+  isLimitedLabel?: string
+}
+```
+
+### Cart item type
+
+```ts
+export type CartItem = {
+  productId: Product['id']
+  name: Product['name']
+  price: Product['price']
+  currency: Product['currency']
+  image: string | null
+}
+```
+
+### Checkout form type
+
+```ts
+export type CheckoutForm = {
+  fullName: string
+  telegramHandle: string
+  note: string
+  promoCode: string
+  fulfillmentType: 'delivery' | 'meetup'
+  paymentMethod: 'meetup_cash' | 'usdt'
+  deliveryCity: string
+  deliveryAddress: string
+  deliveryNotes: string
+  meetupLocation: string
+  meetupTimeOption: string
+  meetupNotes: string
+}
+```
+
+### Promo types
+
+```ts
+export const PROMO_DISCOUNT_TYPES = ['percentage', 'fixed_amount'] as const
+
+export type PromoDiscountType = (typeof PROMO_DISCOUNT_TYPES)[number]
+
+export type PromoCode = {
+  id: string
+  code: string
+  discountType: PromoDiscountType
+  discountValue: number
+  isActive: boolean
+  expiresAt: Date | null
+  usageLimit: number | null
+}
+
+export type AppliedPromo = {
+  code: PromoCode['code']
+  discountType: PromoCode['discountType']
+  discountValue: PromoCode['discountValue']
+  discountAmount: number
+}
+```
+
+### Order types
+
+```ts
+export type OrderStatus =
+  | 'new'
+  | 'waiting_for_payment'
+  | 'paid'
+  | 'ready_for_meetup'
+  | 'completed'
+  | 'cancelled'
+
+export type PaymentMethod = CheckoutForm['paymentMethod']
+export type FulfillmentType = CheckoutForm['fulfillmentType']
+
+export type Order = {
+  id: string
+  fullName: CheckoutForm['fullName']
+  telegramHandle: CheckoutForm['telegramHandle']
+  telegramUserId?: number
+  note: CheckoutForm['note']
+  fulfillmentType: FulfillmentType
+  paymentMethod: PaymentMethod
+  deliveryCity: CheckoutForm['deliveryCity']
+  deliveryAddress: CheckoutForm['deliveryAddress']
+  deliveryNotes: CheckoutForm['deliveryNotes']
+  meetupLocation: CheckoutForm['meetupLocation']
+  meetupTimeOption: CheckoutForm['meetupTimeOption']
+  meetupNotes: CheckoutForm['meetupNotes']
+  items: CartItem[]
+  subtotal: number
+  appliedPromo: AppliedPromo | null
+  total: number
+  status: OrderStatus
+  cancelReason: string
+  createdAt: Date | null
+}
+
+export type CreateOrderInput = {
+  fullName: CheckoutForm['fullName']
+  telegramHandle: CheckoutForm['telegramHandle']
+  telegramUserId?: number
+  note: CheckoutForm['note']
+  fulfillmentType: FulfillmentType
+  paymentMethod: PaymentMethod
+  deliveryCity: CheckoutForm['deliveryCity']
+  deliveryAddress: CheckoutForm['deliveryAddress']
+  deliveryNotes: CheckoutForm['deliveryNotes']
+  meetupLocation: CheckoutForm['meetupLocation']
+  meetupTimeOption: CheckoutForm['meetupTimeOption']
+  meetupNotes: CheckoutForm['meetupNotes']
+  items: CartItem[]
+  subtotal: number
+  appliedPromo: AppliedPromo | null
+  total: number
+  status: OrderStatus
+  cancelReason: string
+}
+```
+
+---
+
+## Planned or optional collections
+
+Keep these in mind if they exist already or are added later:
+- `categories`
+- `dropSubscriptions`
+- `wishlists`
+- `adminUsers` or equivalent admin-role mapping collection
+
+These should only be documented in detail once their real implementation is confirmed from code.
+
+---
+
+## Telegram data note
+
+The app may read Telegram WebApp data on the client through `window.Telegram.WebApp`, including:
+- `initData`
+- `initDataUnsafe.user`
+- theme values
+- basic Telegram user profile fields
+
+Relevant client-side shape:
+
+```ts
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        ready(): void
+        initData?: string
+        colorScheme?: 'light' | 'dark'
+        themeParams?: {
+          bg_color?: string
+          text_color?: string
+          hint_color?: string
+          link_color?: string
+          button_color?: string
+          button_text_color?: string
+          secondary_bg_color?: string
+        }
+        initDataUnsafe?: {
+          user?: {
+            id: number
+            first_name: string
+            last_name?: string
+            username?: string
+            language_code?: string
+            is_premium?: boolean
+          }
+        }
+      }
+    }
+  }
+}
+
+export {}
+```
+
+Important:
+- `initDataUnsafe` is useful for client UX, but it is not enough by itself for trust-sensitive actions.
+- If auth or identity verification depends on Telegram data, server-side verification rules should be documented separately in a security document.
+
+---
+
+## Example promo code document
 
 ```json
 {
@@ -138,7 +363,7 @@ Notes:
 }
 ```
 
-## Example Product Document
+## Example product document
 
 ```json
 {
@@ -149,10 +374,51 @@ Notes:
   "price": 120,
   "currency": "EUR",
   "isAvailable": true,
+  "likesCount": 0,
+  "cartCount": 0,
   "images": [
     "https://firebasestorage.googleapis.com/..."
   ],
   "createdAt": "Firestore Timestamp",
   "isLimitedLabel": "Limited Drop"
+}
+```
+
+## Example order document
+
+```json
+{
+  "fullName": "Alex Example",
+  "telegramHandle": "@alex",
+  "telegramUserId": 123456789,
+  "note": "Please message before meetup.",
+  "fulfillmentType": "meetup",
+  "paymentMethod": "meetup_cash",
+  "deliveryCity": "",
+  "deliveryAddress": "",
+  "deliveryNotes": "",
+  "meetupLocation": "Riga Center",
+  "meetupTimeOption": "Evening",
+  "meetupNotes": "After 18:00 works best",
+  "items": [
+    {
+      "productId": "product_123",
+      "name": "YungWear Heavyweight Hoodie",
+      "price": 120,
+      "currency": "EUR",
+      "image": "https://firebasestorage.googleapis.com/..."
+    }
+  ],
+  "subtotal": 120,
+  "appliedPromo": {
+    "code": "DROP10",
+    "discountType": "percentage",
+    "discountValue": 10,
+    "discountAmount": 12
+  },
+  "total": 108,
+  "status": "new",
+  "cancelReason": "",
+  "createdAt": "Firestore Timestamp"
 }
 ```

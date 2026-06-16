@@ -1,12 +1,8 @@
 import {
-  addDoc,
   collection,
-  deleteDoc,
-  doc,
   getDocs,
   limit,
   query,
-  updateDoc,
   where,
   type QueryDocumentSnapshot,
   type Timestamp,
@@ -18,6 +14,9 @@ import {
   type AppliedPromo,
   type PromoCode,
 } from '../../types/promo'
+
+const DEFAULT_ADMIN_UPSERT_PROMO_URL = '/api/admin/upsertPromoCode'
+const DEFAULT_ADMIN_DELETE_PROMOS_URL = '/api/admin/deletePromoCodes'
 
 type PromoCodeDocument = {
   code: string
@@ -96,57 +95,128 @@ export type CreatePromoCodeInput = {
   usageLimit: number | null
 }
 
-export async function createPromoCode(input: CreatePromoCodeInput): Promise<void> {
-  const db = getFirestoreDb()
-
-  if (!db) {
-    throw new Error('Firebase is not configured yet.')
-  }
-
-  await addDoc(collection(db, 'promoCodes'), {
+function toPromoAdminPayload(input: CreatePromoCodeInput) {
+  return {
     code: input.code.trim().toUpperCase(),
     discountType: input.discountType,
     discountValue: input.discountValue,
     isActive: input.isActive,
-    expiresAt: input.expiresAt ?? null,
+    expiresAt: input.expiresAt ? input.expiresAt.toISOString() : null,
     usageLimit: input.usageLimit,
-  })
+  }
+}
+
+async function readErrorReason(response: Response): Promise<string> {
+  let reason = `http_${response.status}`
+  let detail = ''
+
+  try {
+    const result = (await response.json()) as { reason?: string; detail?: string }
+    if (typeof result.reason === 'string') {
+      reason = result.reason
+    }
+    if (typeof result.detail === 'string' && result.detail) {
+      detail = result.detail
+    }
+  } catch {
+    // Keep HTTP fallback values.
+  }
+
+  return `${reason}${detail ? ` (${detail})` : ''}`
+}
+
+export async function createPromoCode(initData: string, input: CreatePromoCodeInput): Promise<void> {
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        promo: toPromoAdminPayload(input),
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`Failed to save promo code: ${await readErrorReason(response)}.`)
+  }
 }
 
 export async function updatePromoCode(
+  initData: string,
   promoId: string,
   input: CreatePromoCodeInput,
 ): Promise<void> {
-  const db = getFirestoreDb()
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        promoId,
+        promo: toPromoAdminPayload(input),
+      }),
+    },
+  )
 
-  if (!db) {
-    throw new Error('Firebase is not configured yet.')
+  if (!response.ok) {
+    throw new Error(`Failed to save promo code: ${await readErrorReason(response)}.`)
   }
-
-  await updateDoc(doc(db, 'promoCodes', promoId), {
-    code: input.code.trim().toUpperCase(),
-    discountType: input.discountType,
-    discountValue: input.discountValue,
-    isActive: input.isActive,
-    expiresAt: input.expiresAt ?? null,
-    usageLimit: input.usageLimit,
-  })
 }
 
-export async function deletePromoCode(promoId: string): Promise<void> {
-  const db = getFirestoreDb()
+export async function deletePromoCode(initData: string, promoId: string): Promise<void> {
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        promoIds: [promoId],
+      }),
+    },
+  )
 
-  if (!db) {
-    throw new Error('Firebase is not configured yet.')
+  if (!response.ok) {
+    throw new Error(`Failed to delete promo code: ${await readErrorReason(response)}.`)
   }
-
-  await deleteDoc(doc(db, 'promoCodes', promoId))
 }
 
-export async function deleteInactivePromoCodes(promoCodes: PromoCode[]): Promise<void> {
+export async function deleteInactivePromoCodes(
+  initData: string,
+  promoCodes: PromoCode[],
+): Promise<void> {
   const inactivePromos = promoCodes.filter((promo) => !promo.isActive)
 
-  await Promise.all(inactivePromos.map((promo) => deletePromoCode(promo.id)))
+  if (inactivePromos.length === 0) {
+    return
+  }
+
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        promoIds: inactivePromos.map((promo) => promo.id),
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete inactive promo codes: ${await readErrorReason(response)}.`)
+  }
 }
 
 export function validatePromoCode(

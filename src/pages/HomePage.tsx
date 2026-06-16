@@ -1,16 +1,38 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 
 import { AppShell } from '../components/layout/AppShell'
+import { AdminStatusPanel } from '../components/admin/AdminStatusPanel'
 import { CartPanel } from '../components/cart/CartPanel'
+import { StoreCatalogPanel } from '../components/product/StoreCatalogPanel'
+import { StoreControlsPanel } from '../components/store/StoreControlsPanel'
+import { StoreStickyCartBar } from '../components/store/StoreStickyCartBar'
 import { useProducts } from '../hooks/useProducts'
 import { getFirebaseApp, hasFirebaseEnv } from '../lib/firebase/config'
 import { createOrder } from '../lib/firebase/orders'
 import { getPromoCodeByCode, validatePromoCode } from '../lib/firebase/promoCodes'
-import { markProductsAsSold } from '../lib/firebase/products'
+import {
+  updateProductCartCount,
+  updateProductLikesCount,
+} from '../lib/firebase/products'
 import { getFirestoreDb } from '../lib/firebase/firestore'
-import { canAccessAdminPanel } from '../lib/telegram/admin'
+import {
+  canUseBrowserAdminFallback,
+  verifyTelegramAdminAccess,
+} from '../lib/telegram/admin'
+import {
+  buildRouteHash,
+  getStoreScreenDescription,
+  getStoreScreenEyebrow,
+  getStoreScreenTitle,
+  readRouteFromHash,
+} from '../lib/storeRoute'
 import { getTelegramWebAppState } from '../lib/telegram/webApp'
-import type { CartItem, CheckoutForm } from '../types/cart'
+import type {
+  CartItem,
+  CheckoutForm,
+  CheckoutSubmitState,
+  CheckoutSuccessSnapshot,
+} from '../types/cart'
 import type { AppliedPromo } from '../types/promo'
 import type { Product, ProductCategory } from '../types/product'
 
@@ -39,21 +61,88 @@ const OrderAdminPanel = lazy(async () => {
   return { default: module.OrderAdminPanel }
 })
 
+const AdminOverviewPanel = lazy(async () => {
+  const module = await import('../components/admin/AdminOverviewPanel')
+  return { default: module.AdminOverviewPanel }
+})
+
+const BuyerOrdersPanel = lazy(async () => {
+  const module = await import('../components/order/BuyerOrdersPanel')
+  return { default: module.BuyerOrdersPanel }
+})
+const BroadcastAdminPanel = lazy(async () => {
+  const module = await import('../components/broadcast/BroadcastAdminPanel')
+  return { default: module.BroadcastAdminPanel }
+})
+
+const CART_STORAGE_KEY = 'yungwear-cart-items'
+const LIKED_PRODUCTS_STORAGE_KEY = 'yungwear-liked-products'
+const CHECKOUT_SUCCESS_STORAGE_KEY = 'yungwear-checkout-success'
+
+type PersistedCheckoutSuccessState = {
+  orderId: string | null
+  snapshot: CheckoutSuccessSnapshot | null
+}
+
 export function HomePage() {
-  const { isTelegram, user, theme } = getTelegramWebAppState()
-  const canManageProducts = canAccessAdminPanel(user)
+  const initialRoute = readRouteFromHash()
+  const initialCheckoutSuccessState = readStoredSessionJson<PersistedCheckoutSuccessState>(
+    CHECKOUT_SUCCESS_STORAGE_KEY,
+    {
+      orderId: null,
+      snapshot: null,
+    },
+  )
+  const initialStoreScreen =
+    initialRoute.storeScreen === 'success'
+      ? initialCheckoutSuccessState.snapshot
+        ? 'success'
+        : 'cart'
+      : initialRoute.storeScreen
+  const { initData, isTelegram, user, theme } = getTelegramWebAppState()
   const firebaseReady = hasFirebaseEnv()
   const firebaseApp = getFirebaseApp()
   const firestoreDb = getFirestoreDb()
   const { products, isLoading, errorMessage, reloadProducts } = useProducts()
-  const [activeView, setActiveView] = useState<'store' | 'admin'>('store')
+  const hasTelegramBuyerAccess = Boolean(isTelegram && initData && user)
+  const [activeView, setActiveView] = useState<'store' | 'admin'>(initialRoute.activeView)
+  const [storeScreen, setStoreScreen] = useState<
+    'catalog' | 'product' | 'likes' | 'orders' | 'cart' | 'checkout' | 'success'
+  >(initialStoreScreen)
+  const [adminSubView, setAdminSubView] = useState<
+    'overview' | 'products' | 'promos' | 'orders' | 'broadcasts'
+  >(initialRoute.adminSubView)
+  const [storeCollectionView, setStoreCollectionView] = useState<'all' | 'liked'>('all')
+  const [storeSortMode, setStoreSortMode] = useState<'latest' | 'trending'>('latest')
+  const [storeSearchQuery, setStoreSearchQuery] = useState('')
+  const [telegramGateMessage, setTelegramGateMessage] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<'all' | ProductCategory>('all')
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
-  const [cartItems, setCartItems] = useState<CartItem[]>([])
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
-  const [checkoutSubmitted, setCheckoutSubmitted] = useState(false)
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(
+    initialRoute.selectedProductId,
+  )
+  const [cartItems, setCartItems] = useState<CartItem[]>(() =>
+    readStoredJson<CartItem[]>(CART_STORAGE_KEY, []),
+  )
+  const [likedProductIds, setLikedProductIds] = useState<string[]>(() =>
+    readStoredJson<string[]>(LIKED_PRODUCTS_STORAGE_KEY, []),
+  )
+  const [checkoutSubmitted, setCheckoutSubmitted] = useState(
+    initialStoreScreen === 'success' && Boolean(initialCheckoutSuccessState.snapshot),
+  )
+  const [checkoutSubmitState, setCheckoutSubmitState] =
+    useState<CheckoutSubmitState>('idle')
+  const [isAdminAccessLoading, setIsAdminAccessLoading] = useState(
+    initialRoute.activeView === 'admin',
+  )
+  const [canManageProducts, setCanManageProducts] = useState(
+    !user ? canUseBrowserAdminFallback() : false,
+  )
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
-  const [createdOrderId, setCreatedOrderId] = useState<string | null>(null)
+  const [createdOrderId, setCreatedOrderId] = useState<string | null>(
+    initialCheckoutSuccessState.orderId,
+  )
+  const [checkoutSuccessSnapshot, setCheckoutSuccessSnapshot] =
+    useState<CheckoutSuccessSnapshot | null>(initialCheckoutSuccessState.snapshot)
   const [promoFeedback, setPromoFeedback] = useState<string | null>(null)
   const [appliedPromo, setAppliedPromo] = useState<AppliedPromo | null>(null)
   const [isApplyingPromo, setIsApplyingPromo] = useState(false)
@@ -80,6 +169,8 @@ export function HomePage() {
     'price',
     'currency',
     'isAvailable',
+    'likesCount',
+    'cartCount',
     'images',
     'createdAt',
     'isLimitedLabel',
@@ -93,20 +184,98 @@ export function HomePage() {
 
     return ['all', ...categories] as Array<'all' | ProductCategory>
   }, [products])
-  const filteredProducts = useMemo(() => {
-    if (selectedCategory === 'all') {
-      return products
+  const productIdSet = useMemo(() => new Set(products.map((product) => product.id)), [products])
+  const availableProductIdSet = useMemo(
+    () => new Set(products.filter((product) => product.isAvailable).map((product) => product.id)),
+    [products],
+  )
+  const likedProductIdSet = useMemo(() => new Set(likedProductIds), [likedProductIds])
+  const telegramUserLabel = useMemo(() => {
+    if (user?.username) {
+      return `@${user.username}`
     }
 
-    return products.filter((product) => product.category === selectedCategory)
-  }, [products, selectedCategory])
+    if (user?.first_name) {
+      return `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`.trim()
+    }
+
+    if (user?.id) {
+      return `Telegram user ${user.id}`
+    }
+
+    return 'Open in Telegram to connect your account'
+  }, [user])
+  const telegramContactHint = useMemo(() => {
+    if (user?.username) {
+      return `Orders will be linked to ${telegramUserLabel} and your Telegram user ID.`
+    }
+
+    if (user?.id) {
+      return `Orders will be linked to your Telegram user ID ${user.id}, even without a public username.`
+    }
+
+    return 'Checkout works only inside the Telegram Mini App.'
+  }, [telegramUserLabel, user])
+  const validLikedProductIds = useMemo(
+    () => likedProductIds.filter((productId) => productIdSet.has(productId)),
+    [likedProductIds, productIdSet],
+  )
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = storeSearchQuery.trim().toLowerCase()
+    const nextProducts =
+      storeCollectionView === 'liked'
+        ? products.filter((product) => likedProductIdSet.has(product.id))
+        : products
+
+    const categoryFilteredProducts =
+      selectedCategory === 'all'
+        ? nextProducts
+        : nextProducts.filter((product) => product.category === selectedCategory)
+
+    if (!normalizedQuery) {
+      return categoryFilteredProducts
+    }
+
+    return categoryFilteredProducts.filter((product) => {
+      const searchBody = [
+        product.name,
+        product.category,
+        ...product.brandNames,
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return searchBody.includes(normalizedQuery)
+    })
+  }, [likedProductIdSet, products, selectedCategory, storeCollectionView, storeSearchQuery])
+  const sortedProducts = useMemo(() => {
+    const nextProducts = [...filteredProducts]
+
+    nextProducts.sort((leftProduct, rightProduct) => {
+      if (storeSortMode === 'trending') {
+        const scoreDifference =
+          getProductHeatScore(rightProduct) - getProductHeatScore(leftProduct)
+
+        if (scoreDifference !== 0) {
+          return scoreDifference
+        }
+      }
+
+      const leftTime = leftProduct.createdAt?.toMillis() ?? 0
+      const rightTime = rightProduct.createdAt?.toMillis() ?? 0
+
+      return rightTime - leftTime
+    })
+
+    return nextProducts
+  }, [filteredProducts, storeSortMode])
   const selectedProduct = useMemo(() => {
     const matchedProduct = selectedProductId
-      ? filteredProducts.find((product) => product.id === selectedProductId) ?? null
+      ? sortedProducts.find((product) => product.id === selectedProductId) ?? null
       : null
 
-    return matchedProduct ?? filteredProducts[0] ?? null
-  }, [filteredProducts, selectedProductId])
+    return matchedProduct ?? sortedProducts[0] ?? null
+  }, [selectedProductId, sortedProducts])
   const isSelectedProductInCart = useMemo(() => {
     if (!selectedProduct) {
       return false
@@ -114,6 +283,13 @@ export function HomePage() {
 
     return cartItems.some((item) => item.productId === selectedProduct.id)
   }, [cartItems, selectedProduct])
+  const isSelectedProductLiked = useMemo(() => {
+    if (!selectedProduct) {
+      return false
+    }
+
+    return likedProductIds.includes(selectedProduct.id)
+  }, [likedProductIds, selectedProduct])
   const checkoutSubtotal = useMemo(
     () => cartItems.reduce((sum, item) => sum + item.price, 0),
     [cartItems],
@@ -122,6 +298,32 @@ export function HomePage() {
     () => Math.max(0, checkoutSubtotal - (appliedPromo?.discountAmount ?? 0)),
     [appliedPromo, checkoutSubtotal],
   )
+  const unavailableCartProductIds = useMemo(
+    () =>
+      cartItems
+        .filter((item) => !availableProductIdSet.has(item.productId))
+        .map((item) => item.productId),
+    [availableProductIdSet, cartItems],
+  )
+  const nextStepCopy = useMemo(() => {
+    if (activeView === 'store') {
+      return 'Storefront flow is in good shape. Buyers can now keep cart and likes between sessions, browse only liked pieces, and sort the drop by fresh arrivals or community heat.'
+    }
+
+    if (adminSubView === 'overview') {
+      return 'Admin control room is now split into overview, products, promos, and orders. A strong next checkpoint is a full deploy plus Telegram regression test so we lock in this milestone before adding more features.'
+    }
+
+    if (adminSubView === 'products') {
+      return 'Product management is now handling uploads, ordering, and Storage cleanup. Next we can either polish the product admin UI more, or stop here and ship this checkpoint.'
+    }
+
+    if (adminSubView === 'promos') {
+      return 'Promo management is stable now. The next useful step would be better promo reporting or a small usage-tracking model if you decide you need it later.'
+    }
+
+    return 'Orders, payments, and admin actions are wired. The next likely step is a real Telegram regression pass or a lightweight order detail modal if you want a cleaner operations view.'
+  }, [activeView, adminSubView])
   const hasPendingPromoCode = useMemo(() => {
     const normalizedTypedCode = checkoutForm.promoCode.trim().toUpperCase()
     const appliedCode = appliedPromo?.code ?? ''
@@ -132,8 +334,186 @@ export function HomePage() {
 
     return normalizedTypedCode !== appliedCode
   }, [appliedPromo, checkoutForm.promoCode])
+  const shouldShowStickyCartBar =
+    activeView === 'store' &&
+    cartItems.length > 0 &&
+    (storeScreen === 'catalog' || storeScreen === 'product' || storeScreen === 'likes')
 
-  function handleAddToCart(product: Product) {
+  useEffect(() => {
+    writeStoredJson(CART_STORAGE_KEY, cartItems)
+  }, [cartItems])
+
+  useEffect(() => {
+    writeStoredJson(LIKED_PRODUCTS_STORAGE_KEY, likedProductIds)
+  }, [likedProductIds])
+
+  useEffect(() => {
+    if (!checkoutSuccessSnapshot) {
+      removeStoredSessionValue(CHECKOUT_SUCCESS_STORAGE_KEY)
+      return
+    }
+
+    writeStoredSessionJson(CHECKOUT_SUCCESS_STORAGE_KEY, {
+      orderId: createdOrderId,
+      snapshot: checkoutSuccessSnapshot,
+    })
+  }, [checkoutSuccessSnapshot, createdOrderId])
+
+  useEffect(() => {
+    let isCancelled = false
+
+    async function resolveAdminAccess() {
+      if (!user) {
+        const browserFallbackEnabled = canUseBrowserAdminFallback()
+
+        if (!isCancelled) {
+          setCanManageProducts(browserFallbackEnabled)
+          setIsAdminAccessLoading(false)
+        }
+
+        return
+      }
+
+      if (!isTelegram || !initData) {
+        if (!isCancelled) {
+          setCanManageProducts(false)
+          setIsAdminAccessLoading(false)
+        }
+
+        return
+      }
+
+      if (!isCancelled) {
+        setIsAdminAccessLoading(true)
+      }
+
+      try {
+        const verificationResult = await verifyTelegramAdminAccess(initData, user)
+
+        if (!isCancelled) {
+          setCanManageProducts(verificationResult.mode === 'telegram_verified')
+        }
+      } catch {
+        if (!isCancelled) {
+          setCanManageProducts(false)
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsAdminAccessLoading(false)
+        }
+      }
+    }
+
+    void resolveAdminAccess()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [initData, isTelegram, user])
+
+  useEffect(() => {
+    function handleHashChange() {
+      const nextRoute = readRouteFromHash()
+      const nextStoreScreen =
+        nextRoute.storeScreen === 'success' && !checkoutSuccessSnapshot
+          ? 'cart'
+          : nextRoute.storeScreen
+
+      setActiveView(nextRoute.activeView)
+      setStoreScreen(nextStoreScreen)
+      setAdminSubView(nextRoute.adminSubView)
+      setSelectedProductId(nextRoute.selectedProductId)
+    }
+
+    window.addEventListener('hashchange', handleHashChange)
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+    }
+  }, [checkoutSuccessSnapshot])
+
+  useEffect(() => {
+    const nextHash = buildRouteHash({
+      activeView,
+      storeScreen,
+      adminSubView,
+      selectedProductId,
+    })
+
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash
+    }
+  }, [activeView, adminSubView, selectedProductId, storeScreen])
+
+  useEffect(() => {
+    if (products.length === 0) {
+      return
+    }
+
+    setLikedProductIds((currentIds) =>
+      currentIds.filter((productId) => productIdSet.has(productId)),
+    )
+    setSelectedProductId((currentProductId) =>
+      currentProductId && productIdSet.has(currentProductId) ? currentProductId : null,
+    )
+  }, [productIdSet, products.length])
+
+  useEffect(() => {
+    if (unavailableCartProductIds.length === 0) {
+      return
+    }
+
+    setCartItems((currentItems) =>
+      currentItems.filter((item) => !unavailableCartProductIds.includes(item.productId)),
+    )
+    setCheckoutError(
+      'One or more items were removed from your cart because they are no longer available.',
+    )
+
+    if (storeScreen === 'checkout') {
+      setStoreScreen('cart')
+    }
+  }, [storeScreen, unavailableCartProductIds])
+
+  useEffect(() => {
+    if (hasTelegramBuyerAccess) {
+      return
+    }
+
+    if (
+      storeScreen === 'likes' ||
+      storeScreen === 'orders' ||
+      storeScreen === 'cart' ||
+      storeScreen === 'checkout' ||
+      storeScreen === 'success'
+    ) {
+      setStoreScreen('catalog')
+    }
+  }, [hasTelegramBuyerAccess, storeScreen])
+
+  function requireTelegramAccess(actionLabel: string) {
+    if (hasTelegramBuyerAccess) {
+      return true
+    }
+
+    setTelegramGateMessage(
+      `${actionLabel} is available only inside the Telegram Mini App with a real Telegram session. Open the app in Telegram to continue with real likes, cart, and checkout.`,
+    )
+
+    return false
+  }
+
+  async function handleAddToCart(product: Product) {
+    if (!requireTelegramAccess('Cart actions')) {
+      return
+    }
+
+    const isAlreadyInCart = cartItems.some((item) => item.productId === product.id)
+
+    if (isAlreadyInCart) {
+      return
+    }
+
     setCartItems((currentItems) => {
       if (currentItems.some((item) => item.productId === product.id)) {
         return currentItems
@@ -150,20 +530,130 @@ export function HomePage() {
         },
       ]
     })
+
+    try {
+      await updateProductCartCount(product.id, 1)
+    } catch (error) {
+      setCartItems((currentItems) =>
+        currentItems.filter((item) => item.productId !== product.id),
+      )
+      setCheckoutError(
+        error instanceof Error ? error.message : 'Failed to update cart count.',
+      )
+    }
   }
 
-  function handleRemoveFromCart(productId: string) {
+  async function handleRemoveFromCart(productId: string) {
+    if (!requireTelegramAccess('Cart actions')) {
+      return
+    }
+
+    const itemToRemove = cartItems.find((item) => item.productId === productId)
+
+    if (!itemToRemove) {
+      return
+    }
+
     setCartItems((currentItems) =>
       currentItems.filter((item) => item.productId !== productId),
     )
+
+    if (!productIdSet.has(productId)) {
+      return
+    }
+
+    try {
+      await updateProductCartCount(productId, -1)
+    } catch (error) {
+      setCartItems((currentItems) => [...currentItems, itemToRemove])
+      setCheckoutError(
+        error instanceof Error ? error.message : 'Failed to update cart count.',
+      )
+    }
+  }
+
+  async function handleToggleLike(product: Product) {
+    if (!requireTelegramAccess('Likes')) {
+      return
+    }
+
+    const isLiked = likedProductIds.includes(product.id)
+
+    setLikedProductIds((currentIds) =>
+      isLiked
+        ? currentIds.filter((currentId) => currentId !== product.id)
+        : [...currentIds, product.id],
+    )
+
+    try {
+      await updateProductLikesCount(product.id, isLiked ? -1 : 1)
+    } catch (error) {
+      setLikedProductIds((currentIds) =>
+        isLiked
+          ? [...currentIds, product.id]
+          : currentIds.filter((currentId) => currentId !== product.id),
+      )
+      setCheckoutError(
+        error instanceof Error ? error.message : 'Failed to update likes.',
+      )
+    }
   }
 
   function handleOpenCheckout() {
-    setIsCheckoutOpen(true)
+    if (!requireTelegramAccess('Checkout')) {
+      return
+    }
+
+    setStoreScreen('checkout')
     setCheckoutSubmitted(false)
+    setCheckoutSubmitState('idle')
     setCheckoutError(null)
     setCreatedOrderId(null)
+    setCheckoutSuccessSnapshot(null)
     setPromoFeedback(null)
+  }
+
+  function handleOpenCatalog() {
+    setStoreScreen('catalog')
+    setStoreCollectionView('all')
+  }
+
+  function handleResetCatalogFilters() {
+    setStoreSearchQuery('')
+    setSelectedCategory('all')
+    setStoreCollectionView('all')
+    setStoreSortMode('latest')
+    setStoreScreen('catalog')
+  }
+
+  function handleOpenMyOrders() {
+    if (!requireTelegramAccess('Order history')) {
+      return
+    }
+
+    setStoreScreen('orders')
+  }
+
+  function handleOpenLikes() {
+    if (!requireTelegramAccess('Saved likes')) {
+      return
+    }
+
+    setStoreCollectionView('liked')
+    setStoreScreen('likes')
+  }
+
+  function handleOpenProduct(productId: string) {
+    setSelectedProductId(productId)
+    setStoreScreen('product')
+  }
+
+  function handleOpenCart() {
+    if (!requireTelegramAccess('Cart')) {
+      return
+    }
+
+    setStoreScreen('cart')
   }
 
   function handleCheckoutFieldChange(field: keyof CheckoutForm, value: string) {
@@ -237,17 +727,28 @@ export function HomePage() {
   }
 
   async function handleSubmitCheckout() {
+    if (!requireTelegramAccess('Checkout')) {
+      return
+    }
+
+    if (checkoutSubmitState === 'submitting') {
+      return
+    }
+
     const trimmedName = checkoutForm.fullName.trim()
-    const trimmedHandle = checkoutForm.telegramHandle.trim()
-    const productIds = cartItems.map((item) => item.productId)
+    const normalizedTelegramHandle = user?.username
+      ? `@${user.username}`
+      : user?.id
+        ? `tg_user_${user.id}`
+        : ''
 
     if (cartItems.length === 0) {
       setCheckoutError('Add at least one product before checkout.')
       return
     }
 
-    if (!trimmedName || !trimmedHandle) {
-      setCheckoutError('Full name and Telegram handle are required.')
+    if (!trimmedName || !user?.id || !normalizedTelegramHandle) {
+      setCheckoutError('Open the Mini App in Telegram with a real account before checkout.')
       return
     }
 
@@ -271,12 +772,13 @@ export function HomePage() {
     }
 
     try {
+      setCheckoutSubmitState('submitting')
       const initialStatus =
         checkoutForm.paymentMethod === 'usdt' ? 'waiting_for_payment' : 'new'
 
       const orderId = await createOrder({
         fullName: trimmedName,
-        telegramHandle: trimmedHandle,
+        telegramHandle: normalizedTelegramHandle,
         telegramUserId: user?.id,
         note: checkoutForm.note.trim(),
         fulfillmentType: checkoutForm.fulfillmentType,
@@ -295,10 +797,15 @@ export function HomePage() {
         cancelReason: '',
       })
 
-      await markProductsAsSold(productIds)
       setCheckoutError(null)
       setCreatedOrderId(orderId)
+      setCheckoutSuccessSnapshot({
+        items: cartItems.map((item) => ({ ...item })),
+        form: { ...checkoutForm },
+        total: checkoutTotal,
+      })
       setCheckoutSubmitted(true)
+      setStoreScreen('success')
       setCartItems([])
       setAppliedPromo(null)
       setPromoFeedback(null)
@@ -320,6 +827,8 @@ export function HomePage() {
       setCheckoutError(
         error instanceof Error ? error.message : 'Failed to mark items as sold.',
       )
+    } finally {
+      setCheckoutSubmitState('idle')
     }
   }
 
@@ -334,18 +843,27 @@ export function HomePage() {
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => setActiveView('store')}
-              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+              onClick={() => {
+                setActiveView('store')
+                setStoreScreen('catalog')
+              }}
+              className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
                 activeView === 'store'
                   ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
                   : 'bg-white/6 text-[var(--shop-muted)]'
               }`}
             >
-              Store
+              <span>Store</span>
+              <span className="rounded-full bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-white/85">
+                {cartItems.length} Cart
+              </span>
             </button>
             <button
               type="button"
-              onClick={() => setActiveView('admin')}
+              onClick={() => {
+                setActiveView('admin')
+                setAdminSubView('overview')
+              }}
               className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
                 activeView === 'admin'
                   ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
@@ -357,245 +875,245 @@ export function HomePage() {
           </div>
         </article>
 
-        <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-          <div className="grid grid-cols-3 gap-3">
-            <AdminStat
-              label={activeView === 'store' ? 'Visible Pieces' : 'Products'}
-              value={String(products.length)}
-            />
-            <AdminStat
-              label={activeView === 'store' ? 'Sold Archive' : 'Sold'}
-              value={String(products.filter((product) => !product.isAvailable).length)}
-            />
-            <AdminStat
-              label={activeView === 'store' ? 'Cart' : 'Mode'}
-              value={activeView === 'store' ? String(cartItems.length) : 'Admin'}
-            />
-          </div>
-        </article>
-
-        <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-          <p className="text-xs font-medium uppercase tracking-[0.32em] text-[var(--shop-muted)]">
-            Session
-          </p>
-          <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
-            <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Runtime:</span>{' '}
-              {isTelegram ? 'Telegram WebApp detected' : 'Running in browser dev mode'}
-            </p>
-            <p>
-              <span className="font-semibold text-[var(--shop-cream)]">User:</span>{' '}
-              {user
-                ? `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`
-                : 'Telegram user data is not available yet'}
-            </p>
-            <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Username:</span>{' '}
-              {user?.username ? `@${user.username}` : 'Not provided'}
-            </p>
-            <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Telegram ID:</span>{' '}
-              {user?.id ?? 'Open inside Telegram to see it'}
-            </p>
-          </div>
-        </article>
+        {activeView === 'store' ? (
+          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+                  {getStoreScreenEyebrow(storeScreen)}
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--shop-cream)]">
+                  {getStoreScreenTitle(storeScreen)}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--shop-muted)]">
+                  {getStoreScreenDescription(storeScreen)}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenLikes}
+                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                    Loves
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
+                    {validLikedProductIds.length}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenCart}
+                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                    Cart
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
+                    {cartItems.length}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenMyOrders}
+                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                    Orders
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
+                    View
+                  </p>
+                </button>
+              </div>
+            </div>
+          </article>
+        ) : (
+          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+                  Products
+                </p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
+                  {products.length}
+                </p>
+              </div>
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+                  Sold
+                </p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
+                  {products.filter((product) => !product.isAvailable).length}
+                </p>
+              </div>
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+                  Mode
+                </p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
+                  Admin
+                </p>
+              </div>
+            </div>
+          </article>
+        )}
 
         {activeView === 'store' ? (
           <>
-            <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.28),rgba(255,77,90,0.2))] p-5 text-stone-50 shadow-[0_18px_40px_rgba(24,24,27,0.12)] backdrop-blur-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-white/70">
-                Theme Snapshot
-              </p>
-              <p className="mt-2 max-w-[16rem] text-sm leading-6 text-[var(--shop-cream)]/85">
-                The storefront leans into the purple and red brand palette while still following Telegram surfaces.
-              </p>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <ThemeChip label="bg" value={theme.bg_color} />
-                <ThemeChip label="text" value={theme.text_color} />
-                <ThemeChip label="button" value={theme.button_color} />
-                <ThemeChip label="link" value={theme.link_color} />
-              </div>
-            </article>
+            <StoreControlsPanel
+              telegramGateMessage={telegramGateMessage}
+              telegramBotLink={buildTelegramBotLink()}
+              storeScreen={storeScreen}
+              likedCount={validLikedProductIds.length}
+              cartCount={cartItems.length}
+              onCloseGate={() => setTelegramGateMessage(null)}
+              onOpenCatalog={handleOpenCatalog}
+              onOpenLikes={handleOpenLikes}
+              onOpenOrders={handleOpenMyOrders}
+              onOpenCart={handleOpenCart}
+            />
 
-            {!isLoading && !errorMessage && selectedProduct ? (
-              <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
-                <ProductDetailPanel
-                  key={selectedProduct.id}
-                  product={selectedProduct}
-                  isInCart={isSelectedProductInCart}
-                  onAddToCart={handleAddToCart}
+            {(storeScreen === 'catalog' || storeScreen === 'likes') ? (
+              <StoreCatalogPanel
+                storeScreen={storeScreen}
+                isLoading={isLoading}
+                errorMessage={errorMessage}
+                products={products}
+                sortedProducts={sortedProducts}
+                selectedProductId={selectedProduct?.id ?? null}
+                validLikedProductIds={validLikedProductIds}
+                likedProductIds={likedProductIds}
+                categoryOptions={categoryOptions}
+                selectedCategory={selectedCategory}
+                storeCollectionView={storeCollectionView}
+                storeSortMode={storeSortMode}
+                storeSearchQuery={storeSearchQuery}
+                onSearchChange={setStoreSearchQuery}
+                onSelectCollectionView={(view) => {
+                  setStoreCollectionView(view)
+                  setStoreScreen(view === 'liked' ? 'likes' : 'catalog')
+                }}
+                onSelectSortMode={setStoreSortMode}
+                onSelectCategory={setSelectedCategory}
+                onResetFilters={handleResetCatalogFilters}
+                onOpenLikes={handleOpenLikes}
+                onOpenProduct={handleOpenProduct}
+                onOpenLikedProduct={(productId) => {
+                  setStoreCollectionView('liked')
+                  handleOpenProduct(productId)
+                }}
+                onToggleLike={handleToggleLike}
+              />
+            ) : null}
+
+            {storeScreen === 'product' ? (
+              selectedProduct ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStoreScreen(storeCollectionView === 'liked' ? 'likes' : 'catalog')
+                    }
+                    className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+                  >
+                    Back To {storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
+                  </button>
+                  <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
+                    <ProductDetailPanel
+                      key={selectedProduct.id}
+                      product={selectedProduct}
+                      isInCart={isSelectedProductInCart}
+                      isLiked={isSelectedProductLiked}
+                      onAddToCart={handleAddToCart}
+                      onToggleLike={handleToggleLike}
+                    />
+                  </Suspense>
+                </>
+              ) : (
+                <StoreEmptyState
+                  title="No Product Selected"
+                  description="Go back to the catalog and pick a piece to open its full detail view."
+                  actionLabel="Back To Catalog"
+                  onAction={handleOpenCatalog}
                 />
+              )
+            ) : null}
+
+            {storeScreen === 'cart' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleOpenCatalog}
+                  className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+                >
+                  Back To Catalog
+                </button>
+                <CartPanel
+                  items={cartItems}
+                  onRemoveItem={handleRemoveFromCart}
+                  onCheckout={handleOpenCheckout}
+                  onContinueShopping={handleOpenCatalog}
+                />
+              </>
+            ) : null}
+
+            {storeScreen === 'orders' ? (
+              <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
+                {user?.id ? (
+                  <BuyerOrdersPanel
+                    initData={initData}
+                    telegramUserId={user.id}
+                    onBack={handleOpenCatalog}
+                  />
+                ) : null}
               </Suspense>
             ) : null}
 
-            <CartPanel
-              items={cartItems}
-              onRemoveItem={handleRemoveFromCart}
-              onCheckout={handleOpenCheckout}
-            />
-
-            {isCheckoutOpen ? (
-              <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
+            {storeScreen === 'checkout' || storeScreen === 'success' ? (
+              <>
+                {storeScreen === 'checkout' ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenCart}
+                    className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+                  >
+                    Back To Cart
+                  </button>
+                ) : null}
+                <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
                 <CheckoutPanel
                   items={cartItems}
                   form={checkoutForm}
+                  telegramUserLabel={telegramUserLabel}
+                  telegramContactHint={telegramContactHint}
                   errorMessage={checkoutError}
                   isSubmitted={checkoutSubmitted}
                   orderId={createdOrderId}
-                  promoFeedback={promoFeedback}
-                  appliedPromo={appliedPromo}
-                  isApplyingPromo={isApplyingPromo}
-                  hasPendingPromoCode={hasPendingPromoCode}
-                  onChangeForm={handleCheckoutFieldChange}
-                  onApplyPromo={handleApplyPromo}
+                    successSnapshot={checkoutSuccessSnapshot}
+                      promoFeedback={promoFeedback}
+                      appliedPromo={appliedPromo}
+                      isApplyingPromo={isApplyingPromo}
+                      submitState={checkoutSubmitState}
+                      hasPendingPromoCode={hasPendingPromoCode}
+                    onChangeForm={handleCheckoutFieldChange}
+                    onApplyPromo={handleApplyPromo}
                   onSubmit={handleSubmitCheckout}
+                  onViewOrders={handleOpenMyOrders}
+                  onBackToCatalog={handleOpenCatalog}
                 />
-              </Suspense>
+                </Suspense>
+              </>
             ) : null}
 
-            <SectionBanner
-              eyebrow="Storefront"
-              title="Drop Catalog"
-              description="Browse the image-first grid, pick a piece, then open checkout only when the promo state is clean and confirmed."
-            />
-
-            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                    Catalog
-                  </p>
-                  <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-                    Image-first drop grid. Tap any piece to open the focused detail view above.
-                  </p>
-                </div>
-                <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">
-                  2-Column
-                </span>
-              </div>
-              {!isLoading && !errorMessage && products.length > 0 ? (
-                <div className="mt-4">
-                  <div className="flex flex-wrap gap-2">
-                    {categoryOptions.map((category) => {
-                      const isActive = selectedCategory === category
-
-                      return (
-                        <button
-                          key={category}
-                          type="button"
-                          onClick={() => setSelectedCategory(category)}
-                          className={`rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition-colors ${
-                            isActive
-                              ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                              : 'bg-white/8 text-[var(--shop-muted)]'
-                          }`}
-                        >
-                          {category}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Showing {filteredProducts.length} of {products.length} products
-                  </p>
-                </div>
-              ) : null}
-              <div className="mt-5">
-                {isLoading ? (
-                  <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-                    Loading products...
-                  </p>
-                ) : null}
-
-                {!isLoading && errorMessage ? (
-                  <p className="rounded-2xl bg-[var(--shop-red)]/16 px-4 py-3 text-sm text-[var(--shop-cream)]">
-                    {errorMessage}
-                  </p>
-                ) : null}
-
-                {!isLoading && !errorMessage && products.length === 0 ? (
-                  <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-                    No products found yet. Add a document to the <code>products</code> collection to see it here.
-                  </p>
-                ) : null}
-
-                {!isLoading &&
-                  !errorMessage &&
-                  filteredProducts.length === 0 && (
-                    <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-                      No products match the selected category.
-                    </p>
-                  )}
-
-                {!isLoading && !errorMessage && filteredProducts.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    {filteredProducts.map((product) => {
-                      const isSelected = selectedProduct?.id === product.id
-
-                      return (
-                        <article
-                          key={product.id}
-                          className={`overflow-hidden rounded-[28px] border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition-transform ${
-                            isSelected
-                              ? 'border-[var(--shop-red)] ring-2 ring-[var(--shop-red)]/30'
-                              : 'border-white/10'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setSelectedProductId(product.id)}
-                            className="w-full text-left"
-                          >
-                            <div className="relative aspect-[3/4] w-full overflow-hidden bg-black/20">
-                              {product.images[0] ? (
-                                <img
-                                  src={product.images[0]}
-                                  alt={product.name}
-                                  className={`h-full w-full object-cover transition ${
-                                    product.isAvailable ? '' : 'grayscale'
-                                  }`}
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center px-3 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                                  No Image
-                                </div>
-                              )}
-                              <div className="absolute inset-x-0 bottom-0 bg-[linear-gradient(180deg,transparent,rgba(8,2,10,0.92))] px-3 pb-3 pt-12">
-                                <div className="flex items-end justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm font-semibold tracking-[-0.02em] text-[var(--shop-cream)]">
-                                      {product.name}
-                                    </p>
-                                    <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                                      {product.category}
-                                    </p>
-                                  </div>
-                                  <span className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                                    {product.price} {product.currency}
-                                  </span>
-                                </div>
-                              </div>
-                              {product.isLimitedLabel ? (
-                                <span className="absolute left-3 top-3 rounded-full bg-[var(--shop-red)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                                  {product.isLimitedLabel}
-                                </span>
-                              ) : null}
-                              {!product.isAvailable ? (
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/35">
-                                  <span className="rounded-full border border-white/20 bg-black/45 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-white backdrop-blur">
-                                    Sold
-                                  </span>
-                                </div>
-                              ) : null}
-                            </div>
-                          </button>
-                        </article>
-                      )
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            </article>
+            {shouldShowStickyCartBar ? (
+              <StoreStickyCartBar
+                itemCount={cartItems.length}
+                total={checkoutTotal}
+                onOpenCart={handleOpenCart}
+              />
+            ) : null}
           </>
         ) : (
           <>
@@ -605,67 +1123,123 @@ export function HomePage() {
               description="Manage products, promos, and saved checkout requests from one place without leaving the Mini App."
             />
 
-            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                Firebase
-              </p>
-              <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
-                <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">Status:</span>{' '}
-                  {firebaseReady ? 'Environment variables found' : 'Environment variables missing'}
-                </p>
-                <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">App:</span>{' '}
-                  {firebaseApp ? 'Firebase initialized' : 'Waiting for configuration'}
-                </p>
-                <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">Firestore:</span>{' '}
-                  {firestoreDb ? 'Ready for product reads' : 'Waiting for Firebase config'}
-                </p>
-                <p className="text-[var(--shop-muted)]">
-                  Copy <code>.env.example</code> to <code>.env.local</code> and fill in your Firebase project values.
-                </p>
-              </div>
-            </article>
+            <AdminStatusPanel
+              isTelegram={isTelegram}
+              user={user}
+              theme={theme}
+              firebaseReady={firebaseReady}
+              firebaseInitialized={Boolean(firebaseApp)}
+              firestoreReady={Boolean(firestoreDb)}
+            />
 
-            {canManageProducts ? (
-              <Suspense fallback={<AdminPanelsLoadingState />}>
-                <ProductAdminPanel products={products} onProductsChanged={reloadProducts} />
-                <PromoAdminPanel isEnabled={canManageProducts} />
-                <OrderAdminPanel isEnabled={canManageProducts} />
-              </Suspense>
+            {isAdminAccessLoading ? (
+              <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+                  Admin Access
+                </p>
+                <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
+                  <p>Checking backend-verified Telegram admin access.</p>
+                  <p>
+                    Hosted admin tools now wait for the deployed verification endpoint instead of trusting a frontend-only flag.
+                  </p>
+                </div>
+              </article>
+            ) : canManageProducts ? (
+              <>
+                <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        ['overview', 'Overview'],
+                        ['products', 'Products'],
+                        ['promos', 'Promos'],
+                        ['orders', 'Orders'],
+                      ] as const
+                    ).map(([view, label]) => (
+                      <button
+                        key={view}
+                        type="button"
+                        onClick={() => setAdminSubView(view)}
+                        className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+                          adminSubView === view
+                            ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                            : 'bg-white/6 text-[var(--shop-muted)]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+
+                <Suspense fallback={<AdminPanelsLoadingState />}>
+                  {adminSubView === 'overview' ? (
+                    <AdminOverviewPanel
+                      productCount={products.length}
+                      availableCount={products.filter((product) => product.isAvailable).length}
+                      soldCount={products.filter((product) => !product.isAvailable).length}
+                      onOpenProducts={() => setAdminSubView('products')}
+                      onOpenPromos={() => setAdminSubView('promos')}
+                      onOpenOrders={() => setAdminSubView('orders')}
+                      onOpenBroadcasts={() => setAdminSubView('broadcasts')}
+                    />
+                  ) : null}
+
+                  {adminSubView === 'products' ? (
+                    <>
+                      <ProductAdminPanel
+                        initData={initData}
+                        products={products}
+                        onProductsChanged={reloadProducts}
+                      />
+                      <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+                          Products Foundation
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {productFields.map((field) => (
+                            <span
+                              key={field}
+                              className="rounded-full bg-white/8 px-3 py-1 text-xs font-medium text-[var(--shop-cream)]"
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      </article>
+                    </>
+                  ) : null}
+
+                  {adminSubView === 'promos' ? (
+                    <PromoAdminPanel initData={initData} isEnabled={canManageProducts} />
+                  ) : null}
+
+                  {adminSubView === 'orders' ? (
+                    <OrderAdminPanel initData={initData} isEnabled={canManageProducts} />
+                  ) : null}
+
+                  {adminSubView === 'broadcasts' ? (
+                    <BroadcastAdminPanel />
+                  ) : null}
+                </Suspense>
+              </>
             ) : (
               <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
                 <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
                   Admin Access
                 </p>
                 <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
-                  <p>Product management is hidden for non-admin users.</p>
+                  <p>Admin tools are hidden for non-admin users.</p>
                   <p>
-                    Add your Telegram numeric user ID to <code>VITE_TELEGRAM_ADMIN_IDS</code> in <code>.env.local</code>.
+                    Hosted builds now use the backend-verified Telegram admin endpoint before unlocking these tools.
                   </p>
                   <p>
-                    For browser-only local development, you can temporarily set <code>VITE_ENABLE_ADMIN_IN_BROWSER=true</code>.
+                    For browser-only local development, you can temporarily set <code>VITE_ENABLE_ADMIN_IN_BROWSER=true</code> on localhost only.
                   </p>
                 </div>
               </article>
             )}
 
-            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                Products Foundation
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {productFields.map((field) => (
-                  <span
-                    key={field}
-                    className="rounded-full bg-white/8 px-3 py-1 text-xs font-medium text-[var(--shop-cream)]"
-                  >
-                    {field}
-                  </span>
-                ))}
-              </div>
-            </article>
           </>
         )}
 
@@ -674,31 +1248,11 @@ export function HomePage() {
             Next Step
           </p>
           <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            Next we can add promo creation to admin and start showing saved orders in the admin view.
+            {nextStepCopy}
           </p>
         </article>
       </section>
     </AppShell>
-  )
-}
-
-type ThemeChipProps = {
-  label: string
-  value?: string
-}
-
-function ThemeChip({ label, value }: ThemeChipProps) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/6 p-3 backdrop-blur">
-      <p className="text-xs uppercase tracking-[0.24em] text-white/60">{label}</p>
-      <div className="mt-2 flex items-center gap-3">
-        <span
-          className="h-5 w-5 rounded-full border border-white/15"
-          style={{ backgroundColor: value ?? '#ffffff' }}
-        />
-        <span className="font-medium text-[var(--shop-cream)]">{value ?? 'n/a'}</span>
-      </div>
-    </div>
   )
 }
 
@@ -717,24 +1271,6 @@ function SectionBanner({ eyebrow, title, description }: SectionBannerProps) {
       </h2>
       <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">{description}</p>
     </article>
-  )
-}
-
-type AdminStatProps = {
-  label: string
-  value: string
-}
-
-function AdminStat({ label, value }: AdminStatProps) {
-  return (
-    <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-        {label}
-      </p>
-      <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-        {value}
-      </p>
-    </div>
   )
 }
 
@@ -766,4 +1302,120 @@ function StorePanelLoadingState({ label }: StorePanelLoadingStateProps) {
       </p>
     </article>
   )
+}
+
+type StoreEmptyStateProps = {
+  title: string
+  description: string
+  actionLabel: string
+  onAction: () => void
+}
+
+function StoreEmptyState({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: StoreEmptyStateProps) {
+  return (
+    <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+        {title}
+      </p>
+      <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">{description}</p>
+      <button
+        type="button"
+        onClick={onAction}
+        className="mt-4 rounded-[24px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white"
+      >
+        {actionLabel}
+      </button>
+    </article>
+  )
+}
+
+function readStoredJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  const rawValue = window.localStorage.getItem(key)
+
+  if (!rawValue) {
+    return fallback
+  }
+
+  try {
+    return JSON.parse(rawValue) as T
+  } catch {
+    return fallback
+  }
+}
+
+function writeStoredJson<T>(key: string, value: T) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(key, JSON.stringify(value))
+}
+
+function readStoredSessionJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  const rawValue = window.sessionStorage.getItem(key)
+
+  if (!rawValue) {
+    return fallback
+  }
+
+  try {
+    return JSON.parse(rawValue) as T
+  } catch {
+    return fallback
+  }
+}
+
+function writeStoredSessionJson<T>(key: string, value: T) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.sessionStorage.setItem(key, JSON.stringify(value))
+}
+
+function removeStoredSessionValue(key: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.sessionStorage.removeItem(key)
+}
+
+function getProductHeatScore(product: Product) {
+  return product.likesCount + product.cartCount * 2
+}
+
+function buildTelegramBotLink() {
+  const botUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME?.trim()
+  const startApp = import.meta.env.VITE_TELEGRAM_BOT_STARTAPP?.trim()
+  const start = import.meta.env.VITE_TELEGRAM_BOT_START?.trim()
+
+  if (botUsername) {
+    const normalizedBotUsername = botUsername.replace(/^@/, '')
+
+    if (startApp) {
+      return `https://t.me/${normalizedBotUsername}?startapp=${encodeURIComponent(startApp)}`
+    }
+
+    if (start) {
+      return `https://t.me/${normalizedBotUsername}?start=${encodeURIComponent(start)}`
+    }
+
+    return `https://t.me/${normalizedBotUsername}`
+  }
+
+  return 'https://telegram.org/'
 }
