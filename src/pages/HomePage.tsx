@@ -21,9 +21,6 @@ import {
 } from '../lib/telegram/admin'
 import {
   buildRouteHash,
-  getStoreScreenDescription,
-  getStoreScreenEyebrow,
-  getStoreScreenTitle,
   readRouteFromHash,
 } from '../lib/storeRoute'
 import { getTelegramWebAppState } from '../lib/telegram/webApp'
@@ -160,21 +157,6 @@ export function HomePage() {
     meetupTimeOption: '',
     meetupNotes: '',
   })
-  const productFields: Array<keyof Product> = [
-    'id',
-    'name',
-    'description',
-    'category',
-    'brandNames',
-    'price',
-    'currency',
-    'isAvailable',
-    'likesCount',
-    'cartCount',
-    'images',
-    'createdAt',
-    'isLimitedLabel',
-  ]
   const categoryOptions = useMemo(() => {
     const categories = new Set<ProductCategory>()
 
@@ -305,25 +287,6 @@ export function HomePage() {
         .map((item) => item.productId),
     [availableProductIdSet, cartItems],
   )
-  const nextStepCopy = useMemo(() => {
-    if (activeView === 'store') {
-      return 'Storefront flow is in good shape. Buyers can now keep cart and likes between sessions, browse only liked pieces, and sort the drop by fresh arrivals or community heat.'
-    }
-
-    if (adminSubView === 'overview') {
-      return 'Admin control room is now split into overview, products, promos, and orders. A strong next checkpoint is a full deploy plus Telegram regression test so we lock in this milestone before adding more features.'
-    }
-
-    if (adminSubView === 'products') {
-      return 'Product management is now handling uploads, ordering, and Storage cleanup. Next we can either polish the product admin UI more, or stop here and ship this checkpoint.'
-    }
-
-    if (adminSubView === 'promos') {
-      return 'Promo management is stable now. The next useful step would be better promo reporting or a small usage-tracking model if you decide you need it later.'
-    }
-
-    return 'Orders, payments, and admin actions are wired. The next likely step is a real Telegram regression pass or a lightweight order detail modal if you want a cleaner operations view.'
-  }, [activeView, adminSubView])
   const hasPendingPromoCode = useMemo(() => {
     const normalizedTypedCode = checkoutForm.promoCode.trim().toUpperCase()
     const appliedCode = appliedPromo?.code ?? ''
@@ -832,257 +795,177 @@ export function HomePage() {
     }
   }
 
-  return (
-    <AppShell
-      title="Heart Drop"
-      subtitle="Purple-box storefront for limited pieces, one-offs, and community-only releases."
-      isTelegram={isTelegram}
-    >
-      <section className="space-y-4">
-        <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveView('store')
-                setStoreScreen('catalog')
-              }}
-              className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                activeView === 'store'
-                  ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                  : 'bg-white/6 text-[var(--shop-muted)]'
-              }`}
-            >
-              <span>Store</span>
+return (
+  <AppShell
+    title="YUNGWEAR"
+    subtitle=""
+    isTelegram={isTelegram}
+  >
+    <section className="space-y-4">
+
+      {/* Store / Admin tab switcher */}
+      <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('store')
+              setStoreScreen('catalog')
+            }}
+            className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+              activeView === 'store'
+                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                : 'bg-white/6 text-[var(--shop-muted)]'
+            }`}
+          >
+            <span>Store</span>
+            {cartItems.length > 0 && (
               <span className="rounded-full bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-white/85">
                 {cartItems.length} Cart
               </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveView('admin')
-                setAdminSubView('overview')
-              }}
-              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                activeView === 'admin'
-                  ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                  : 'bg-white/6 text-[var(--shop-muted)]'
-              }`}
-            >
-              Admin
-            </button>
-          </div>
-        </article>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('admin')
+              setAdminSubView('overview')
+            }}
+            className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+              activeView === 'admin'
+                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                : 'bg-white/6 text-[var(--shop-muted)]'
+            }`}
+          >
+            Admin
+          </button>
+        </div>
+      </article>
 
-        {activeView === 'store' ? (
-          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                  {getStoreScreenEyebrow(storeScreen)}
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--shop-cream)]">
-                  {getStoreScreenTitle(storeScreen)}
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-[var(--shop-muted)]">
-                  {getStoreScreenDescription(storeScreen)}
-                </p>
-              </div>
-              <div className="flex shrink-0 gap-2">
+      {/* Store view */}
+      {activeView === 'store' ? (
+        <>
+          <StoreControlsPanel
+            telegramGateMessage={telegramGateMessage}
+            telegramBotLink={buildTelegramBotLink()}
+            storeScreen={storeScreen}
+            likedCount={validLikedProductIds.length}
+            cartCount={cartItems.length}
+            onCloseGate={() => setTelegramGateMessage(null)}
+            onOpenCatalog={handleOpenCatalog}
+            onOpenLikes={handleOpenLikes}
+            onOpenOrders={handleOpenMyOrders}
+            onOpenCart={handleOpenCart}
+          />
+
+          {(storeScreen === 'catalog' || storeScreen === 'likes') ? (
+            <StoreCatalogPanel
+              storeScreen={storeScreen}
+              isLoading={isLoading}
+              errorMessage={errorMessage}
+              products={products}
+              sortedProducts={sortedProducts}
+              selectedProductId={selectedProduct?.id ?? null}
+              validLikedProductIds={validLikedProductIds}
+              likedProductIds={likedProductIds}
+              categoryOptions={categoryOptions}
+              selectedCategory={selectedCategory}
+              storeCollectionView={storeCollectionView}
+              storeSortMode={storeSortMode}
+              storeSearchQuery={storeSearchQuery}
+              onSearchChange={setStoreSearchQuery}
+              onSelectCollectionView={(view) => {
+                setStoreCollectionView(view)
+                setStoreScreen(view === 'liked' ? 'likes' : 'catalog')
+              }}
+              onSelectSortMode={setStoreSortMode}
+              onSelectCategory={setSelectedCategory}
+              onResetFilters={handleResetCatalogFilters}
+              onOpenLikes={handleOpenLikes}
+              onOpenProduct={handleOpenProduct}
+              onOpenLikedProduct={(productId) => {
+                setStoreCollectionView('liked')
+                handleOpenProduct(productId)
+              }}
+              onToggleLike={handleToggleLike}
+            />
+          ) : null}
+
+          {storeScreen === 'product' ? (
+            selectedProduct ? (
+              <>
                 <button
                   type="button"
-                  onClick={handleOpenLikes}
-                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
+                  onClick={() =>
+                    setStoreScreen(storeCollectionView === 'liked' ? 'likes' : 'catalog')
+                  }
+                  className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
                 >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Loves
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
-                    {validLikedProductIds.length}
-                  </p>
+                  Back To {storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
                 </button>
+                <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
+                  <ProductDetailPanel
+                    key={selectedProduct.id}
+                    product={selectedProduct}
+                    isInCart={isSelectedProductInCart}
+                    isLiked={isSelectedProductLiked}
+                    onAddToCart={handleAddToCart}
+                    onToggleLike={handleToggleLike}
+                  />
+                </Suspense>
+              </>
+            ) : (
+              <StoreEmptyState
+                title="No Product Selected"
+                description="Go back to the catalog and pick a piece."
+                actionLabel="Back To Catalog"
+                onAction={handleOpenCatalog}
+              />
+            )
+          ) : null}
+
+          {storeScreen === 'cart' ? (
+            <>
+              <button
+                type="button"
+                onClick={handleOpenCatalog}
+                className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+              >
+                Back To Catalog
+              </button>
+              <CartPanel
+                items={cartItems}
+                onRemoveItem={handleRemoveFromCart}
+                onCheckout={handleOpenCheckout}
+                onContinueShopping={handleOpenCatalog}
+              />
+            </>
+          ) : null}
+
+          {storeScreen === 'orders' ? (
+            <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
+              {user?.id ? (
+                <BuyerOrdersPanel
+                  initData={initData}
+                  telegramUserId={user.id}
+                  onBack={handleOpenCatalog}
+                />
+              ) : null}
+            </Suspense>
+          ) : null}
+
+          {storeScreen === 'checkout' || storeScreen === 'success' ? (
+            <>
+              {storeScreen === 'checkout' ? (
                 <button
                   type="button"
                   onClick={handleOpenCart}
-                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Cart
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
-                    {cartItems.length}
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenMyOrders}
-                  className="rounded-[20px] border border-white/10 bg-white/8 px-3 py-2 text-left"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Orders
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-[var(--shop-cream)]">
-                    View
-                  </p>
-                </button>
-              </div>
-            </div>
-          </article>
-        ) : (
-          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Products
-                </p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-                  {products.length}
-                </p>
-              </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Sold
-                </p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-                  {products.filter((product) => !product.isAvailable).length}
-                </p>
-              </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Mode
-                </p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-                  Admin
-                </p>
-              </div>
-            </div>
-          </article>
-        )}
-
-        {activeView === 'store' ? (
-          <>
-            <StoreControlsPanel
-              telegramGateMessage={telegramGateMessage}
-              telegramBotLink={buildTelegramBotLink()}
-              storeScreen={storeScreen}
-              likedCount={validLikedProductIds.length}
-              cartCount={cartItems.length}
-              onCloseGate={() => setTelegramGateMessage(null)}
-              onOpenCatalog={handleOpenCatalog}
-              onOpenLikes={handleOpenLikes}
-              onOpenOrders={handleOpenMyOrders}
-              onOpenCart={handleOpenCart}
-            />
-
-            {(storeScreen === 'catalog' || storeScreen === 'likes') ? (
-              <StoreCatalogPanel
-                storeScreen={storeScreen}
-                isLoading={isLoading}
-                errorMessage={errorMessage}
-                products={products}
-                sortedProducts={sortedProducts}
-                selectedProductId={selectedProduct?.id ?? null}
-                validLikedProductIds={validLikedProductIds}
-                likedProductIds={likedProductIds}
-                categoryOptions={categoryOptions}
-                selectedCategory={selectedCategory}
-                storeCollectionView={storeCollectionView}
-                storeSortMode={storeSortMode}
-                storeSearchQuery={storeSearchQuery}
-                onSearchChange={setStoreSearchQuery}
-                onSelectCollectionView={(view) => {
-                  setStoreCollectionView(view)
-                  setStoreScreen(view === 'liked' ? 'likes' : 'catalog')
-                }}
-                onSelectSortMode={setStoreSortMode}
-                onSelectCategory={setSelectedCategory}
-                onResetFilters={handleResetCatalogFilters}
-                onOpenLikes={handleOpenLikes}
-                onOpenProduct={handleOpenProduct}
-                onOpenLikedProduct={(productId) => {
-                  setStoreCollectionView('liked')
-                  handleOpenProduct(productId)
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            ) : null}
-
-            {storeScreen === 'product' ? (
-              selectedProduct ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setStoreScreen(storeCollectionView === 'liked' ? 'likes' : 'catalog')
-                    }
-                    className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-                  >
-                    Back To {storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
-                  </button>
-                  <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
-                    <ProductDetailPanel
-                      key={selectedProduct.id}
-                      product={selectedProduct}
-                      isInCart={isSelectedProductInCart}
-                      isLiked={isSelectedProductLiked}
-                      onAddToCart={handleAddToCart}
-                      onToggleLike={handleToggleLike}
-                    />
-                  </Suspense>
-                </>
-              ) : (
-                <StoreEmptyState
-                  title="No Product Selected"
-                  description="Go back to the catalog and pick a piece to open its full detail view."
-                  actionLabel="Back To Catalog"
-                  onAction={handleOpenCatalog}
-                />
-              )
-            ) : null}
-
-            {storeScreen === 'cart' ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleOpenCatalog}
                   className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
                 >
-                  Back To Catalog
+                  Back To Cart
                 </button>
-                <CartPanel
-                  items={cartItems}
-                  onRemoveItem={handleRemoveFromCart}
-                  onCheckout={handleOpenCheckout}
-                  onContinueShopping={handleOpenCatalog}
-                />
-              </>
-            ) : null}
-
-            {storeScreen === 'orders' ? (
-              <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
-                {user?.id ? (
-                  <BuyerOrdersPanel
-                    initData={initData}
-                    telegramUserId={user.id}
-                    onBack={handleOpenCatalog}
-                  />
-                ) : null}
-              </Suspense>
-            ) : null}
-
-            {storeScreen === 'checkout' || storeScreen === 'success' ? (
-              <>
-                {storeScreen === 'checkout' ? (
-                  <button
-                    type="button"
-                    onClick={handleOpenCart}
-                    className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-                  >
-                    Back To Cart
-                  </button>
-                ) : null}
-                <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
+              ) : null}
+              <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
                 <CheckoutPanel
                   items={cartItems}
                   form={checkoutForm}
@@ -1091,187 +974,138 @@ export function HomePage() {
                   errorMessage={checkoutError}
                   isSubmitted={checkoutSubmitted}
                   orderId={createdOrderId}
-                    successSnapshot={checkoutSuccessSnapshot}
-                      promoFeedback={promoFeedback}
-                      appliedPromo={appliedPromo}
-                      isApplyingPromo={isApplyingPromo}
-                      submitState={checkoutSubmitState}
-                      hasPendingPromoCode={hasPendingPromoCode}
-                    onChangeForm={handleCheckoutFieldChange}
-                    onApplyPromo={handleApplyPromo}
+                  successSnapshot={checkoutSuccessSnapshot}
+                  promoFeedback={promoFeedback}
+                  appliedPromo={appliedPromo}
+                  isApplyingPromo={isApplyingPromo}
+                  submitState={checkoutSubmitState}
+                  hasPendingPromoCode={hasPendingPromoCode}
+                  onChangeForm={handleCheckoutFieldChange}
+                  onApplyPromo={handleApplyPromo}
                   onSubmit={handleSubmitCheckout}
                   onViewOrders={handleOpenMyOrders}
                   onBackToCatalog={handleOpenCatalog}
                 />
-                </Suspense>
-              </>
-            ) : null}
+              </Suspense>
+            </>
+          ) : null}
 
-            {shouldShowStickyCartBar ? (
-              <StoreStickyCartBar
-                itemCount={cartItems.length}
-                total={checkoutTotal}
-                onOpenCart={handleOpenCart}
-              />
-            ) : null}
-          </>
-        ) : (
-          <>
-            <SectionBanner
-              eyebrow="Admin"
-              title="Control Room"
-              description="Manage products, promos, and saved checkout requests from one place without leaving the Mini App."
+          {shouldShowStickyCartBar ? (
+            <StoreStickyCartBar
+              itemCount={cartItems.length}
+              total={checkoutTotal}
+              onOpenCart={handleOpenCart}
             />
-
-            <AdminStatusPanel
-              isTelegram={isTelegram}
-              user={user}
-              theme={theme}
-              firebaseReady={firebaseReady}
-              firebaseInitialized={Boolean(firebaseApp)}
-              firestoreReady={Boolean(firestoreDb)}
-            />
-
-            {isAdminAccessLoading ? (
-              <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                  Admin Access
+          ) : null}
+        </>
+      ) : (
+        <>
+          {/* Admin stats strip */}
+          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Products</p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">{products.length}</p>
+              </div>
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Sold</p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
+                  {products.filter((p) => !p.isAvailable).length}
                 </p>
-                <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
-                  <p>Checking backend-verified Telegram admin access.</p>
-                  <p>
-                    Hosted admin tools now wait for the deployed verification endpoint instead of trusting a frontend-only flag.
-                  </p>
+              </div>
+              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Mode</p>
+                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">Admin</p>
+              </div>
+            </div>
+          </article>
+
+          <AdminStatusPanel
+            isTelegram={isTelegram}
+            user={user}
+            theme={theme}
+            firebaseReady={firebaseReady}
+            firebaseInitialized={Boolean(firebaseApp)}
+            firestoreReady={Boolean(firestoreDb)}
+          />
+
+          {isAdminAccessLoading ? (
+            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">Admin Access</p>
+              <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">Verifying Telegram admin access…</p>
+            </article>
+          ) : canManageProducts ? (
+            <>
+              <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      ['overview', 'Overview'],
+                      ['products', 'Products'],
+                      ['promos', 'Promos'],
+                      ['orders', 'Orders'],
+                    ] as const
+                  ).map(([view, label]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setAdminSubView(view)}
+                      className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+                        adminSubView === view
+                          ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                          : 'bg-white/6 text-[var(--shop-muted)]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </article>
-            ) : canManageProducts ? (
-              <>
-                <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
-                  <div className="grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        ['overview', 'Overview'],
-                        ['products', 'Products'],
-                        ['promos', 'Promos'],
-                        ['orders', 'Orders'],
-                      ] as const
-                    ).map(([view, label]) => (
-                      <button
-                        key={view}
-                        type="button"
-                        onClick={() => setAdminSubView(view)}
-                        className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                          adminSubView === view
-                            ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                            : 'bg-white/6 text-[var(--shop-muted)]'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </article>
 
-                <Suspense fallback={<AdminPanelsLoadingState />}>
-                  {adminSubView === 'overview' ? (
-                    <AdminOverviewPanel
-                      productCount={products.length}
-                      availableCount={products.filter((product) => product.isAvailable).length}
-                      soldCount={products.filter((product) => !product.isAvailable).length}
-                      onOpenProducts={() => setAdminSubView('products')}
-                      onOpenPromos={() => setAdminSubView('promos')}
-                      onOpenOrders={() => setAdminSubView('orders')}
-                      onOpenBroadcasts={() => setAdminSubView('broadcasts')}
-                    />
-                  ) : null}
+              <Suspense fallback={<AdminPanelsLoadingState />}>
+                {adminSubView === 'overview' ? (
+                  <AdminOverviewPanel
+                    productCount={products.length}
+                    availableCount={products.filter((p) => p.isAvailable).length}
+                    soldCount={products.filter((p) => !p.isAvailable).length}
+                    onOpenProducts={() => setAdminSubView('products')}
+                    onOpenPromos={() => setAdminSubView('promos')}
+                    onOpenOrders={() => setAdminSubView('orders')}
+                    onOpenBroadcasts={() => setAdminSubView('broadcasts')}
+                  />
+                ) : null}
+                {adminSubView === 'products' ? (
+                  <ProductAdminPanel
+                    initData={initData}
+                    products={products}
+                    onProductsChanged={reloadProducts}
+                  />
+                ) : null}
+                {adminSubView === 'promos' ? (
+                  <PromoAdminPanel initData={initData} isEnabled={canManageProducts} />
+                ) : null}
+                {adminSubView === 'orders' ? (
+                  <OrderAdminPanel initData={initData} isEnabled={canManageProducts} />
+                ) : null}
+                {adminSubView === 'broadcasts' ? (
+                  <BroadcastAdminPanel />
+                ) : null}
+              </Suspense>
+            </>
+          ) : (
+            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">Admin Access</p>
+              <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">
+                Admin tools are restricted. Open the Mini App in Telegram with an authorized account.
+              </p>
+            </article>
+          )}
+        </>
+      )}
 
-                  {adminSubView === 'products' ? (
-                    <>
-                      <ProductAdminPanel
-                        initData={initData}
-                        products={products}
-                        onProductsChanged={reloadProducts}
-                      />
-                      <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-                        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                          Products Foundation
-                        </p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {productFields.map((field) => (
-                            <span
-                              key={field}
-                              className="rounded-full bg-white/8 px-3 py-1 text-xs font-medium text-[var(--shop-cream)]"
-                            >
-                              {field}
-                            </span>
-                          ))}
-                        </div>
-                      </article>
-                    </>
-                  ) : null}
-
-                  {adminSubView === 'promos' ? (
-                    <PromoAdminPanel initData={initData} isEnabled={canManageProducts} />
-                  ) : null}
-
-                  {adminSubView === 'orders' ? (
-                    <OrderAdminPanel initData={initData} isEnabled={canManageProducts} />
-                  ) : null}
-
-                  {adminSubView === 'broadcasts' ? (
-                    <BroadcastAdminPanel />
-                  ) : null}
-                </Suspense>
-              </>
-            ) : (
-              <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-                  Admin Access
-                </p>
-                <div className="mt-4 space-y-3 text-sm text-[var(--shop-muted)]">
-                  <p>Admin tools are hidden for non-admin users.</p>
-                  <p>
-                    Hosted builds now use the backend-verified Telegram admin endpoint before unlocking these tools.
-                  </p>
-                  <p>
-                    For browser-only local development, you can temporarily set <code>VITE_ENABLE_ADMIN_IN_BROWSER=true</code> on localhost only.
-                  </p>
-                </div>
-              </article>
-            )}
-
-          </>
-        )}
-
-        <article className="rounded-[32px] border border-dashed border-white/12 bg-white/5 p-5 backdrop-blur-xl">
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Next Step
-          </p>
-          <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            {nextStepCopy}
-          </p>
-        </article>
-      </section>
-    </AppShell>
-  )
-}
-
-type SectionBannerProps = {
-  eyebrow: string
-  title: string
-  description: string
-}
-
-function SectionBanner({ eyebrow, title, description }: SectionBannerProps) {
-  return (
-    <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.16),rgba(255,77,90,0.12))] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-      <p className="text-xs font-medium uppercase tracking-[0.28em] text-white/70">{eyebrow}</p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-        {title}
-      </h2>
-      <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">{description}</p>
-    </article>
-  )
+    </section>
+  </AppShell>
+)
 }
 
 function AdminPanelsLoadingState() {
