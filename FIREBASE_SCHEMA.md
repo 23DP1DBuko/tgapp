@@ -123,6 +123,7 @@ type PromoCodeDocument = {
   isActive: boolean
   expiresAt: Timestamp | null
   usageLimit: number | null
+  usageCount?: number
 }
 ```
 
@@ -132,7 +133,38 @@ Notes:
 - `fixed_amount` uses `discountValue` as a currency amount like `15`.
 - `expiresAt` may be `null` when the promo has no expiration date.
 - `usageLimit` may be `null` when the promo has no hard limit.
-- If usage counting exists later, that should be documented explicitly instead of inferred.
+- `usageCount` tracks how many times the promo has been used. It is incremented atomically inside the checkout transaction. When `usageLimit` is set and `usageCount >= usageLimit`, the promo is treated as exhausted and checkout is rejected with `promo_exhausted`. Old documents without `usageCount` default to `0`.
+
+---
+
+### `broadcasts`
+
+This collection stores broadcast messages sent to Telegram subscribers.
+Documents are written server-side by the Telegram bot webhook or Cloud Functions when a broadcast is sent.
+The admin panel reads them to display broadcast history.
+
+Document shape:
+
+```ts
+type BroadcastDocument = {
+  createdAt: Timestamp
+  createdBy: number
+  sentCount: number
+  failedCount: number
+  reason: string
+  text: string
+}
+```
+
+Notes:
+- Firestore document ID acts as the broadcast `id` in the app.
+- `createdAt` is stored as a Firestore timestamp and may be `null` in transitional states.
+- `createdBy` stores the Telegram user ID of the admin who triggered the broadcast.
+- `sentCount` is the number of chats that successfully received the message.
+- `failedCount` is the number of chats that failed to receive the message.
+- `reason` contains the broadcast intent or trigger reason (e.g. `"new_drop"`).
+- `text` is the broadcast message content sent to subscribers.
+- Firestore security rules allow public reads (same as `products` and `promoCodes`), but client-side writes are denied — broadcasts are only created server-side.
 
 ---
 
@@ -201,6 +233,22 @@ export type CheckoutForm = {
 }
 ```
 
+### Broadcast type
+
+```ts
+export type Broadcast = {
+  id: string
+  createdAt: string | null
+  createdBy: number | null
+  sentCount: number
+  failedCount: number
+  reason: string
+  text: string
+}
+```
+
+---
+
 ### Promo types
 
 ```ts
@@ -216,6 +264,7 @@ export type PromoCode = {
   isActive: boolean
   expiresAt: Date | null
   usageLimit: number | null
+  usageCount?: number
 }
 
 export type AppliedPromo = {
@@ -299,6 +348,19 @@ These should only be documented in detail once their real implementation is conf
 
 ---
 
+## Security rules summary
+
+The following table summarizes the Firestore security rules for each collection:
+
+| Collection | Read | Write | Notes |
+|---|---|---|---|
+| `products` | Public | Denied | Writes handled by Cloud Functions |
+| `promoCodes` | Public | Denied | Writes handled by Cloud Functions |
+| `orders` | Denied | Denied | All access via Cloud Functions |
+| `broadcasts` | Public | Denied | Writes handled server-side by Telegram bot |
+
+---
+
 ## Telegram data note
 
 The app may read Telegram WebApp data on the client through `window.Telegram.WebApp`, including:
@@ -350,6 +412,21 @@ Important:
 
 ---
 
+## Example broadcast document
+
+```json
+{
+  "createdAt": "Firestore Timestamp",
+  "createdBy": 123456789,
+  "sentCount": 142,
+  "failedCount": 3,
+  "reason": "new_drop",
+  "text": "New drop is live! Check out the latest YungWear Heavyweight Hoodie."
+}
+```
+
+---
+
 ## Example promo code document
 
 ```json
@@ -359,7 +436,8 @@ Important:
   "discountValue": 10,
   "isActive": true,
   "expiresAt": null,
-  "usageLimit": null
+  "usageLimit": null,
+  "usageCount": 0
 }
 ```
 

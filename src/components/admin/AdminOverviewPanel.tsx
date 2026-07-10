@@ -17,7 +17,6 @@ export function AdminOverviewPanel({
   onOpenOrders,
   onOpenBroadcasts,
 }: AdminOverviewPanelProps) {
-  console.log('INIT_DATA', window.Telegram?.WebApp?.initData)
   return (
     <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
       <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">

@@ -10,6 +10,7 @@ export type PromoCode = {
   isActive: boolean
   expiresAt: Date | null
   usageLimit: number | null
+  usageCount?: number
 }
 
 export type AppliedPromo = {

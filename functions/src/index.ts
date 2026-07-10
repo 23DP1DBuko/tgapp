@@ -81,6 +81,7 @@ export type PromoAdminInput = {
   isActive: boolean
   expiresAt: string | null
   usageLimit: number | null
+  usageCount?: number | null
 }
 
 export type UpsertPromoCodeAdminRequest = {
@@ -193,6 +194,7 @@ export type CreateCheckoutOrderResponse = {
     | 'invalid_method'
     | 'invalid_payload'
     | 'product_unavailable'
+    | 'promo_exhausted'
     | 'internal_error'
 }
 
@@ -776,6 +778,7 @@ export const upsertPromoCodeAdmin = onRequest(
         isActive: promo.isActive,
         expiresAt: promo.expiresAt ? new Date(promo.expiresAt) : null,
         usageLimit: promo.usageLimit,
+        ...(typeof promo.usageCount === 'number' ? { usageCount: promo.usageCount } : {}),
       }
 
       if (promoId) {
@@ -1129,6 +1132,22 @@ export const createCheckoutOrder = onRequest(
       const productIds = body.items.map((item) => item.productId)
       const orderRef = db.collection('orders').doc()
 
+      // Look up the promo code document reference if a promo was applied
+      const promoCode = body.appliedPromo?.code ?? ''
+      let promoDocRef: FirebaseFirestore.DocumentReference | null = null
+
+      if (promoCode) {
+        const promoSnapshot = await db
+          .collection('promoCodes')
+          .where('code', '==', promoCode)
+          .limit(1)
+          .get()
+
+        if (!promoSnapshot.empty) {
+          promoDocRef = promoSnapshot.docs[0].ref
+        }
+      }
+
       await db.runTransaction(async (transaction) => {
         const productRefs = productIds.map((productId) => db.collection('products').doc(productId))
         const productSnapshots = await Promise.all(
@@ -1153,6 +1172,27 @@ export const createCheckoutOrder = onRequest(
             throw new Error(`Product mismatch: ${productIds[index]}`)
           }
         })
+
+        // Increment promo usage count inside the transaction
+        if (promoDocRef) {
+          const promoSnapshot = await transaction.get(promoDocRef)
+          const promoData = promoSnapshot.data() as
+            | { usageCount?: number; usageLimit?: number | null }
+            | undefined
+
+          if (promoData) {
+            const currentUsage = promoData.usageCount ?? 0
+            const limit = promoData.usageLimit
+
+            if (typeof limit === 'number' && currentUsage >= limit) {
+              throw new Error(`Promo usage exhausted: ${promoCode}`)
+            }
+
+            transaction.update(promoDocRef, {
+              usageCount: FieldValue.increment(1),
+            })
+          }
+        }
 
         transaction.set(orderRef, {
           fullName: body.fullName.trim(),
@@ -1192,10 +1232,21 @@ export const createCheckoutOrder = onRequest(
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Unknown backend error.'
 
-      response.status(detail.startsWith('Product unavailable:') ? 409 : 500).json({
+      let status = 500
+      let reason: CreateCheckoutOrderResponse['reason'] = 'internal_error'
+
+      if (detail.startsWith('Product unavailable:')) {
+        status = 409
+        reason = 'product_unavailable'
+      } else if (detail.startsWith('Promo usage exhausted:')) {
+        status = 409
+        reason = 'promo_exhausted'
+      }
+
+      response.status(status).json({
         ok: false,
         orderId: null,
-        reason: detail.startsWith('Product unavailable:') ? 'product_unavailable' : 'internal_error',
+        reason,
         detail,
       } satisfies CreateCheckoutOrderResponse)
     }
@@ -1635,7 +1686,12 @@ function isValidPromoInput(value: unknown): value is PromoAdminInput {
     (promo.usageLimit === null ||
       (typeof promo.usageLimit === 'number' &&
         Number.isInteger(promo.usageLimit) &&
-        promo.usageLimit >= 0))
+        promo.usageLimit >= 0)) &&
+    (promo.usageCount === undefined ||
+      promo.usageCount === null ||
+      (typeof promo.usageCount === 'number' &&
+        Number.isInteger(promo.usageCount) &&
+        promo.usageCount >= 0))
   )
 }
 

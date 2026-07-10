@@ -764,3 +764,5 @@ function cleanupPendingPreviewUrls(items: GalleryItem[]) {
     }
   })
 }
+
+

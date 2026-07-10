@@ -31,7 +31,6 @@ export function CheckoutPanel({
   items,
   form,
   telegramUserLabel,
-  telegramContactHint,
   errorMessage,
   isSubmitted,
   orderId,
@@ -123,29 +122,13 @@ export function CheckoutPanel({
               Awaiting follow-up
             </span>
           </div>
-
-          <div className="rounded-[24px] border border-white/10 bg-black/10 px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-[0.28em] text-white/70">
-              Success Mode
-            </p>
-            <p className="mt-2 text-sm leading-6 text-[var(--shop-cream)]/85">
-              This piece is off the market now. The next update happens in Telegram follow-up, not in checkout.
-            </p>
-          </div>
         </div>
-
-        <p className="mt-4 text-sm leading-6 text-[var(--shop-cream)]/85">
-          {successSummary.description}
-        </p>
 
         <div className="mt-5 rounded-[24px] border border-white/10 bg-black/15 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
                 Request Status
-              </p>
-              <p className="mt-2 text-sm leading-6 text-[var(--shop-cream)]">
-                Your order is locked in and now moves through the follow-up flow inside Telegram.
               </p>
             </div>
             <span className="rounded-full bg-emerald-300/18 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100">
@@ -251,7 +234,7 @@ export function CheckoutPanel({
               >
                 <div className="h-14 w-12 shrink-0 overflow-hidden rounded-[14px] bg-black/20">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="h-full w-full object-cover" />
+                    <img src={item.image} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/60">
                       No Img
@@ -262,9 +245,7 @@ export function CheckoutPanel({
                   <p className="truncate text-sm font-semibold text-[var(--shop-cream)]">
                     {item.name}
                   </p>
-                  <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/60">
-                    Reserved in this order
-                  </p>
+
                 </div>
                 <span className="shrink-0 text-sm font-semibold text-[var(--shop-cream)]">
                   {item.price} {item.currency}
@@ -285,9 +266,9 @@ export function CheckoutPanel({
           <button
             type="button"
             onClick={onBackToCatalog}
-            className="rounded-[24px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white"
-          >
-            Back To Catalog
+          className="rounded-[24px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-white"
+        >
+          ← Catalog
           </button>
         </div>
       </article>
@@ -297,17 +278,9 @@ export function CheckoutPanel({
   return (
     <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Checkout
-          </p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-            Finalize your order
-          </h3>
-          <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            Keep it tight: confirm contact, choose fulfillment, choose payment, then send the order request.
-          </p>
-        </div>
+        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+          Checkout
+        </p>
         <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">
           Manual Payment
         </span>
@@ -315,15 +288,10 @@ export function CheckoutPanel({
 
       <div className="mt-5 space-y-4">
         <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.12),rgba(255,77,90,0.08))] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Checkout Flow
-              </p>
-              <p className="mt-2 text-sm leading-6 text-[var(--shop-muted)]">
-                Keep the last step tight: confirm the path, then send the order request once the review looks clean.
-              </p>
-            </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+              Steps
+            </p>
             <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
               {checkoutFlow.filter((step) => step.isComplete).length}/4 ready
             </span>
@@ -389,9 +357,7 @@ export function CheckoutPanel({
               <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
                 {telegramUserLabel}
               </p>
-              <p className="mt-2 text-xs leading-5 text-[var(--shop-muted)]">
-                {telegramContactHint}
-              </p>
+
             </div>
 
             <label className="block">
@@ -402,7 +368,7 @@ export function CheckoutPanel({
                 value={form.note}
                 onChange={(event) => onChangeForm('note', event.target.value)}
                 className={`${inputClassName} min-h-24 resize-y`}
-                placeholder="Optional delivery or sizing note"
+                placeholder="Optional"
               />
             </label>
           </div>
@@ -433,9 +399,6 @@ export function CheckoutPanel({
               }`}
             >
               <span className="block font-semibold uppercase tracking-[0.14em]">Meetup</span>
-              <span className="mt-2 block text-xs leading-5">
-                Pick a meetup location and rough time window.
-              </span>
             </button>
             <button
               type="button"
@@ -447,9 +410,6 @@ export function CheckoutPanel({
               }`}
             >
               <span className="block font-semibold uppercase tracking-[0.14em]">Delivery</span>
-              <span className="mt-2 block text-xs leading-5">
-                Enter city and address for manual delivery coordination.
-              </span>
             </button>
           </div>
         </div>
@@ -490,7 +450,7 @@ export function CheckoutPanel({
                   value={form.deliveryNotes}
                   onChange={(event) => onChangeForm('deliveryNotes', event.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Entrance code, floor, extra notes"
+                  placeholder="Extra info"
                 />
               </label>
             </div>
@@ -539,7 +499,7 @@ export function CheckoutPanel({
                   value={form.meetupNotes}
                   onChange={(event) => onChangeForm('meetupNotes', event.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Extra context for the meetup"
+                  placeholder="Notes"
                 />
               </label>
             </div>
@@ -574,9 +534,7 @@ export function CheckoutPanel({
               <span className="block font-semibold uppercase tracking-[0.14em]">
                 Meetup Cash
               </span>
-              <span className="mt-2 block text-xs leading-5">
-                Buyer pays hand to hand when meeting up.
-              </span>
+
             </button>
             <button
               type="button"
@@ -588,9 +546,7 @@ export function CheckoutPanel({
               }`}
             >
               <span className="block font-semibold uppercase tracking-[0.14em]">USDT</span>
-              <span className="mt-2 block text-xs leading-5">
-                Buyer will send crypto manually after checkout.
-              </span>
+
             </button>
           </div>
         </div>
@@ -601,9 +557,7 @@ export function CheckoutPanel({
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
                 Order Review
               </p>
-              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
-                Items in this request
-              </p>
+
             </div>
             <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
               {items.length} pieces
@@ -618,7 +572,7 @@ export function CheckoutPanel({
               >
                 <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[14px] bg-black/20">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="h-full w-full object-cover" />
+                    <img src={item.image} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-[var(--shop-muted)]">
                       No Img
@@ -629,9 +583,7 @@ export function CheckoutPanel({
                   <p className="truncate text-sm font-semibold text-[var(--shop-cream)]">
                     {item.name}
                   </p>
-                  <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Ready for checkout
-                  </p>
+
                 </div>
                 <span className="text-sm font-semibold text-[var(--shop-cream)]">
                   {item.price} {item.currency}
@@ -647,9 +599,7 @@ export function CheckoutPanel({
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
                 Promo
               </p>
-              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
-                Discount code
-              </p>
+
             </div>
             <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
               Optional
@@ -701,9 +651,7 @@ export function CheckoutPanel({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
             Final Review
           </p>
-          <p className="mt-2 text-xs leading-5 text-[var(--shop-muted)]">
-            This request stays tied to your Telegram identity and moves into manual follow-up once submitted.
-          </p>
+
           <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
             <span>Items</span>
             <span>{items.length}</span>
@@ -728,25 +676,13 @@ export function CheckoutPanel({
           <p className="rounded-2xl bg-[var(--shop-red)]/16 px-4 py-3 text-sm text-[var(--shop-cream)]">
             {errorMessage}
           </p>
-        ) : null}
-
-        {isSubmitting ? (
-          <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Sending Request
-                </p>
-                <p className="mt-2 text-sm leading-6 text-[var(--shop-cream)]">
-                  Locking the piece, saving the order, and moving you into the success screen.
-                </p>
-              </div>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-                Hold tight
-              </span>
+        ) : null}          {isSubmitting ? (
+            <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                Sending Request
+              </p>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
         <button
           type="button"
@@ -767,29 +703,23 @@ const inputClassName =
 function getCheckoutSuccessSummary(form: CheckoutForm) {
   if (form.fulfillmentType === 'delivery' && form.paymentMethod === 'usdt') {
     return {
-      description:
-        'Your order was saved and the item was marked as sold. This delivery order is now waiting for payment confirmation.',
       nextStep:
-        'Send the USDT payment and wait for delivery confirmation in Telegram chat.',
+        'Send the USDT payment, then wait for delivery confirmation in Telegram.',
       detail: `Delivery to ${form.deliveryCity || 'your city'} | ${form.deliveryAddress || 'address pending'}`,
     }
   }
 
   if (form.fulfillmentType === 'meetup' && form.paymentMethod === 'usdt') {
     return {
-      description:
-        'Your meetup order was saved and the item was marked as sold. Payment still needs to be confirmed before the meetup is finalized.',
       nextStep:
-        'Send the USDT payment first, then confirm the meetup details in Telegram chat.',
+        'Send the USDT payment, then confirm the meetup in Telegram chat.',
       detail: `${formatMeetupLocation(form.meetupLocation)} | ${formatMeetupTime(form.meetupTimeOption)}`,
     }
   }
 
   return {
-    description:
-      'Your meetup order was saved and the item was marked as sold. The admin can now coordinate the handoff with you in Telegram chat.',
     nextStep:
-      'Wait for the admin to message you and confirm the meetup place and time.',
+      'Admin will message you in Telegram to confirm the meetup.',
     detail: `${formatMeetupLocation(form.meetupLocation)} | ${formatMeetupTime(form.meetupTimeOption)}`,
   }
 }

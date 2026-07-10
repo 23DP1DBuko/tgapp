@@ -34,8 +34,7 @@ export function BroadcastAdminPanel() {
             Broadcast History
           </p>
           <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            See the last broadcasts sent to Telegram subscribers and how many
-            chats received them.
+            See the last broadcasts sent to Telegram subscribers and how many chats received them.
           </p>
         </div>
         <button

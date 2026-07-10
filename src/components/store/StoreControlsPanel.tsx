@@ -69,18 +69,32 @@ export function StoreControlsPanel({
           <StoreNavButton
             isActive={storeScreen === 'catalog' || storeScreen === 'product'}
             onClick={onOpenCatalog}
-            label="Catalog"
-          />
+            ariaLabel="Catalog"
+          >
+            <GridIcon />
+          </StoreNavButton>
+
           <StoreNavButton
             isActive={storeScreen === 'likes'}
             onClick={onOpenLikes}
-            label={`Likes ${likedCount}`}
-          />
+            ariaLabel={`Liked pieces${likedCount > 0 ? ` (${likedCount})` : ''}`}
+          >
+            <HeartIcon filled={storeScreen === 'likes'} />
+            {likedCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--shop-red)] text-[9px] font-bold leading-none text-white">
+                {likedCount > 9 ? '9+' : likedCount}
+              </span>
+            ) : null}
+          </StoreNavButton>
+
           <StoreNavButton
             isActive={storeScreen === 'orders'}
             onClick={onOpenOrders}
-            label="Orders"
-          />
+            ariaLabel="Orders"
+          >
+            <OrdersIcon />
+          </StoreNavButton>
+
           <StoreNavButton
             isActive={
               storeScreen === 'cart' ||
@@ -88,8 +102,15 @@ export function StoreControlsPanel({
               storeScreen === 'success'
             }
             onClick={onOpenCart}
-            label={`Cart ${cartCount}`}
-          />
+            ariaLabel={`Cart${cartCount > 0 ? ` (${cartCount})` : ''}`}
+          >
+            <CartIcon />
+            {cartCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--shop-red)] text-[9px] font-bold leading-none text-white">
+                {cartCount > 9 ? '9+' : cartCount}
+              </span>
+            ) : null}
+          </StoreNavButton>
         </div>
       </article>
     </>
@@ -98,22 +119,85 @@ export function StoreControlsPanel({
 
 type StoreNavButtonProps = {
   isActive: boolean
-  label: string
+  ariaLabel: string
   onClick: () => void
+  children: React.ReactNode
 }
 
-function StoreNavButton({ isActive, label, onClick }: StoreNavButtonProps) {
+function StoreNavButton({ isActive, ariaLabel, onClick, children }: StoreNavButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl px-3 py-3 text-xs font-semibold uppercase tracking-[0.18em] transition-colors ${
+      aria-label={ariaLabel}
+      className={`relative flex items-center justify-center rounded-2xl py-3 transition-colors ${
         isActive
           ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
           : 'bg-white/6 text-[var(--shop-muted)]'
       }`}
     >
-      {label}
+      {children}
     </button>
+  )
+}
+
+function GridIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        d="M4.25 2A2.25 2.25 0 002 4.25v2.5A2.25 2.25 0 004.25 9h2.5A2.25 2.25 0 009 6.75v-2.5A2.25 2.25 0 006.75 2h-2.5zm0 9A2.25 2.25 0 002 13.25v2.5A2.25 2.25 0 004.25 18h2.5A2.25 2.25 0 009 15.75v-2.5A2.25 2.25 0 006.75 11h-2.5zm9-9A2.25 2.25 0 0011 4.25v2.5A2.25 2.25 0 0013.25 9h2.5A2.25 2.25 0 0018 6.75v-2.5A2.25 2.25 0 0015.75 2h-2.5zm0 9A2.25 2.25 0 0011 13.25v2.5A2.25 2.25 0 0013.25 18h2.5A2.25 2.25 0 0018 15.75v-2.5A2.25 2.25 0 0015.75 11h-2.5z"
+        clipRule="evenodd"
+      />
+    </svg>
+  )
+}
+
+function HeartIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 21s-6.7-4.4-9.2-8.1C.8 10 .9 6.5 3.6 4.7c2.2-1.5 5.1-.8 6.8 1.3C12 3.9 14.8 3.2 17 4.7c2.7 1.8 2.8 5.3.8 8.2C18.7 14.2 12 21 12 21Z" />
+    </svg>
+  )
+}
+
+function OrdersIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        d="M4.5 2A2.5 2.5 0 002 4.5v11A2.5 2.5 0 004.5 18h11a2.5 2.5 0 002.5-2.5v-11A2.5 2.5 0 0015.5 2h-11zm.25 4a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H4.75zM4 9.5A.75.75 0 014.75 9h10.5a.75.75 0 010 1.5H4.75A.75.75 0 014 9.5zm0 3a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5A.75.75 0 014 12.5z"
+        clipRule="evenodd"
+      />
+    </svg>
+  )
+}
+
+function CartIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h10l-1.2 6H6.2L4.8 9.5" />
+      <path d="M4 7 3 4H1.5" />
+      <circle cx="7.5" cy="18" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="13.5" cy="18" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
   )
 }

@@ -247,11 +247,19 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             className={inputClassName}
           >
             <option value="new">Create new promo code</option>
-            {promos.map((promo) => (
-              <option key={promo.id} value={promo.id}>
-                Edit: {promo.code}
-              </option>
-            ))}
+            {promos.map((promo) => {
+              const usedCount = promo.usageCount ?? 0
+              const usageLabel =
+                promo.usageLimit !== null
+                  ? `${usedCount}/${promo.usageLimit}`
+                  : `${usedCount} used`
+
+              return (
+                <option key={promo.id} value={promo.id}>
+                  Edit: {promo.code} · {usageLabel}
+                </option>
+              )
+            })}
           </select>
         </label>
 
@@ -309,6 +317,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             </select>
           </label>
 
+        <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
               Usage Limit
@@ -323,6 +332,46 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
               placeholder="Leave empty for unlimited"
             />
           </label>
+
+          {selectedPromo ? (
+            <div className="rounded-2xl border border-white/10 bg-white/6 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                Current Usage
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
+                {selectedPromo.usageCount ?? 0}
+                {selectedPromo.usageLimit !== null
+                  ? ` / ${selectedPromo.usageLimit}`
+                  : ''}
+              </p>
+              {selectedPromo.usageLimit !== null ? (
+                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      (selectedPromo.usageCount ?? 0) >= selectedPromo.usageLimit
+                        ? 'bg-[var(--shop-red)]'
+                        : (selectedPromo.usageCount ?? 0) >= selectedPromo.usageLimit * 0.8
+                          ? 'bg-amber-400'
+                          : 'bg-emerald-400/70'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, ((selectedPromo.usageCount ?? 0) / selectedPromo.usageLimit) * 100)}%`,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/6 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                Current Usage
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--shop-muted)]">
+                —
+              </p>
+            </div>
+          )}
+        </div>
         </div>
 
         <label className="block">

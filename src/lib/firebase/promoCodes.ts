@@ -25,6 +25,7 @@ type PromoCodeDocument = {
   isActive: boolean
   expiresAt?: Timestamp | null
   usageLimit?: number | null
+  usageCount?: number
 }
 
 function toPromoCode(snapshot: QueryDocumentSnapshot<PromoCodeDocument>): PromoCode {
@@ -40,6 +41,7 @@ function toPromoCode(snapshot: QueryDocumentSnapshot<PromoCodeDocument>): PromoC
     isActive: Boolean(data.isActive),
     expiresAt: data.expiresAt ? data.expiresAt.toDate() : null,
     usageLimit: typeof data.usageLimit === 'number' ? data.usageLimit : null,
+    usageCount: typeof data.usageCount === 'number' ? data.usageCount : undefined,
   }
 }
 
@@ -232,8 +234,12 @@ export function validatePromoCode(
     throw new Error('This promo code has expired.')
   }
 
-  if (promoCode.usageLimit !== null && promoCode.usageLimit <= 0) {
-    throw new Error('This promo code has no uses left.')
+  if (promoCode.usageLimit !== null) {
+    const currentUsage = promoCode.usageCount ?? 0
+
+    if (currentUsage >= promoCode.usageLimit) {
+      throw new Error('This promo code has no uses left.')
+    }
   }
 
   if (subtotal <= 0) {

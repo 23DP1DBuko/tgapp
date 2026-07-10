@@ -185,5 +185,10 @@ service cloud.firestore {
       allow update: if false;
       allow read: if false;
     }
+
+    match /broadcasts/{broadcastId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
   }
 }
