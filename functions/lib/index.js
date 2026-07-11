@@ -4,52 +4,6 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineInt, defineSecret, defineString } from 'firebase-functions/params';
-async function upsertTelegramSubscriberFromUpdate(body) {
-  const message = body?.message;
-  const from = message?.from;
-  const chat = message?.chat;
-
-  const telegramUserId = typeof from?.id === 'number' ? from.id : null;
-  const chatId = typeof chat?.id === 'number' ? chat.id : null;
-  const username = typeof from?.username === 'string' ? from.username : null;
-  const firstName = typeof from?.first_name === 'string' ? from.first_name : null;
-
-  if (!telegramUserId || !chatId) {
-    return;
-  }
-
-  const db = getFirestore();
-  const docRef = db.collection('telegramSubscribers').doc(String(telegramUserId));
-
-  await db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(docRef);
-    const now = FieldValue.serverTimestamp();
-
-    if (!snapshot.exists) {
-      transaction.set(docRef, {
-        telegramUserId,
-        chatId,
-        username,
-        firstName,
-        isAdmin: false,
-        allowBroadcasts: true,
-        createdAt: now,
-        lastSeenAt: now,
-      });
-    } else {
-      transaction.set(
-        docRef,
-        {
-          chatId,
-          username,
-          firstName,
-          lastSeenAt: now,
-        },
-        { merge: true },
-      );
-    }
-  });
-}
 const DEFAULT_INIT_DATA_MAX_AGE_SECONDS = 60 * 60;
 const telegramBotToken = defineSecret('TELEGRAM_BOT_TOKEN');
 const telegramAdminIds = defineString('TELEGRAM_ADMIN_IDS');
@@ -149,8 +103,8 @@ export const telegramBotWebhook = onRequest({
         return;
     }
     if (isStartCommand(messageText)) {
+        await upsertTelegramSubscriberFromUpdate(body);
         try {
-            await upsertTelegramSubscriberFromUpdate(body);
             await sendTelegramStoreWelcomeMessage(botToken, chatId, body?.message?.from?.first_name);
         }
         catch (error) {
@@ -189,6 +143,119 @@ export const telegramBotWebhook = onRequest({
         }
     }
     response.status(200).json({ ok: true });
+});
+export const broadcastMessageAdmin = onRequest({
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+}, async (request, response) => {
+    if (request.method !== 'POST') {
+        response.status(405).json({
+            ok: false,
+            sentCount: 0,
+            reason: 'invalid_method',
+        });
+        return;
+    }
+    const botToken = telegramBotToken.value();
+    if (!botToken) {
+        response.status(500).json({
+            ok: false,
+            sentCount: 0,
+            reason: 'missing_bot_token',
+        });
+        return;
+    }
+    const body = request.body;
+    const initData = typeof body?.initData === 'string' ? body.initData : '';
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!text || text.length > 2000) {
+        response.status(400).json({
+            ok: false,
+            sentCount: 0,
+            reason: 'invalid_payload',
+        });
+        return;
+    }
+    const verificationResult = verifyTelegramInitData(initData, botToken);
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+        response.status(401).json({
+            ok: false,
+            sentCount: 0,
+            reason: verificationResult.reason === 'expired_init_data'
+                ? 'expired_init_data'
+                : 'invalid_init_data',
+        });
+        return;
+    }
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+        response.status(403).json({
+            ok: false,
+            sentCount: 0,
+            reason: 'forbidden',
+        });
+        return;
+    }
+    try {
+        const db = getFirestore();
+        const snapshot = await db
+            .collection('telegramSubscribers')
+            .where('allowBroadcasts', '==', true)
+            .get();
+        let sentCount = 0;
+        let failedCount = 0;
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            const chatId = typeof data.chatId === 'number' ? data.chatId : null;
+            if (!chatId)
+                continue;
+            try {
+                await sendTelegramBroadcastMessage(botToken, chatId, text);
+                sentCount += 1;
+            }
+            catch {
+                failedCount += 1;
+            }
+        }
+        const createdBy = typeof verificationResult.user.id === 'number'
+            ? verificationResult.user.id
+            : null;
+        const reason = 'broadcast_sent';
+        try {
+            const broadcastRef = await db.collection('broadcasts').add({
+                createdAt: FieldValue.serverTimestamp(),
+                createdBy,
+                sentCount,
+                failedCount,
+                reason,
+                text,
+            });
+            response.status(200).json({
+                ok: true,
+                sentCount,
+                failedCount,
+                broadcastId: broadcastRef.id,
+                reason,
+            });
+        }
+        catch (error) {
+            console.error('Failed to log broadcast', error);
+            response.status(200).json({
+                ok: true,
+                sentCount,
+                failedCount,
+                reason,
+            });
+        }
+    }
+    catch (error) {
+        response.status(500).json({
+            ok: false,
+            sentCount: 0,
+            reason: 'internal_error',
+            detail: error instanceof Error ? error.message : 'Unknown backend error.',
+        });
+    }
 });
 export const updateOrderStatusAdmin = onRequest({
     cors: true,
@@ -300,128 +367,6 @@ export const updateOrderStatusAdmin = onRequest({
         });
     }
 });
-export const broadcastMessageAdmin = onRequest(
-  {
-    cors: true,
-    invoker: 'public',
-    secrets: [telegramBotToken],
-  },
-  async (request, response) => {
-    if (request.method !== 'POST') {
-      response.status(405).json({
-        ok: false,
-        sentCount: 0,
-        reason: 'invalid_method',
-      });
-      return;
-    }
-
-    const botToken = telegramBotToken.value();
-    if (!botToken) {
-      response.status(500).json({
-        ok: false,
-        sentCount: 0,
-        reason: 'missing_bot_token',
-      });
-      return;
-    }
-
-    const body = request.body;
-    const initData = typeof body?.initData === 'string' ? body.initData : '';
-    const text = typeof body?.message === 'string' ? body.message.trim() : '';
-
-    if (!text || text.length > 1000) {
-      response.status(400).json({
-        ok: false,
-        sentCount: 0,
-        reason: 'invalid_payload',
-      });
-      return;
-    }
-
-    const verificationResult = verifyTelegramInitData(initData, botToken);
-    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
-      response.status(401).json({
-        ok: false,
-        sentCount: 0,
-        reason:
-          verificationResult.reason === 'expired_init_data'
-            ? 'expired_init_data'
-            : 'invalid_init_data',
-      });
-      return;
-    }
-
-    // Only admins are allowed to broadcast
-    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
-      response.status(403).json({
-        ok: false,
-        sentCount: 0,
-        reason: 'forbidden',
-      });
-      return;
-    }
-
-    try {
-      const db = getFirestore();
-
-      const snapshot = await db
-        .collection('telegramSubscribers')
-        .where('allowBroadcasts', '==', true)
-        .get();
-
-      let sentCount = 0;
-      let failedCount = 0;
-
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        const chatId = typeof data.chatId === 'number' ? data.chatId : null;
-        if (!chatId) continue;
-
-        try {
-          await sendTelegramBroadcastMessage(botToken, chatId, text);
-          sentCount += 1;
-        } catch {
-          failedCount += 1;
-        }
-      }
-
-      const createdBy =
-        typeof verificationResult.user.id === 'number'
-          ? verificationResult.user.id
-          : null;
-      const reason = 'broadcast_sent';
-
-      try {
-        await db.collection('broadcasts').add({
-          createdAt: FieldValue.serverTimestamp(),
-          createdBy,
-          sentCount,
-          failedCount,
-          reason,
-          text,
-        });
-      } catch (error) {
-        console.error('Failed to log broadcast', error);
-        // Do not throw — logging failure should not break the broadcast response.
-      }
-
-      response.status(200).json({
-        ok: true,
-        sentCount,
-        failedCount,
-        reason,
-      });
-    } catch (error) {
-      response.status(500).json({
-        ok: false,
-        sentCount: 0,
-        reason: 'internal_error',
-        detail: error instanceof Error ? error.message : 'Unknown backend error.',
-      });
-    }
-  }
-);
 export const listOrdersAdmin = onRequest({
     cors: true,
     invoker: 'public',
@@ -547,6 +492,7 @@ export const upsertPromoCodeAdmin = onRequest({
             isActive: promo.isActive,
             expiresAt: promo.expiresAt ? new Date(promo.expiresAt) : null,
             usageLimit: promo.usageLimit,
+            ...(typeof promo.usageCount === 'number' ? { usageCount: promo.usageCount } : {}),
         };
         if (promoId) {
             await getFirestore().collection('promoCodes').doc(promoId).set(payload, { merge: true });
@@ -841,6 +787,19 @@ export const createCheckoutOrder = onRequest({
         const db = getFirestore();
         const productIds = body.items.map((item) => item.productId);
         const orderRef = db.collection('orders').doc();
+        // Look up the promo code document reference if a promo was applied
+        const promoCode = body.appliedPromo?.code ?? '';
+        let promoDocRef = null;
+        if (promoCode) {
+            const promoSnapshot = await db
+                .collection('promoCodes')
+                .where('code', '==', promoCode)
+                .limit(1)
+                .get();
+            if (!promoSnapshot.empty) {
+                promoDocRef = promoSnapshot.docs[0].ref;
+            }
+        }
         await db.runTransaction(async (transaction) => {
             const productRefs = productIds.map((productId) => db.collection('products').doc(productId));
             const productSnapshots = await Promise.all(productRefs.map((productRef) => transaction.get(productRef)));
@@ -855,6 +814,21 @@ export const createCheckoutOrder = onRequest({
                     throw new Error(`Product mismatch: ${productIds[index]}`);
                 }
             });
+            // Increment promo usage count inside the transaction
+            if (promoDocRef) {
+                const promoSnapshot = await transaction.get(promoDocRef);
+                const promoData = promoSnapshot.data();
+                if (promoData) {
+                    const currentUsage = promoData.usageCount ?? 0;
+                    const limit = promoData.usageLimit;
+                    if (typeof limit === 'number' && currentUsage >= limit) {
+                        throw new Error(`Promo usage exhausted: ${promoCode}`);
+                    }
+                    transaction.update(promoDocRef, {
+                        usageCount: FieldValue.increment(1),
+                    });
+                }
+            }
             transaction.set(orderRef, {
                 fullName: body.fullName.trim(),
                 telegramHandle: body.telegramHandle.trim(),
@@ -891,10 +865,20 @@ export const createCheckoutOrder = onRequest({
     }
     catch (error) {
         const detail = error instanceof Error ? error.message : 'Unknown backend error.';
-        response.status(detail.startsWith('Product unavailable:') ? 409 : 500).json({
+        let status = 500;
+        let reason = 'internal_error';
+        if (detail.startsWith('Product unavailable:')) {
+            status = 409;
+            reason = 'product_unavailable';
+        }
+        else if (detail.startsWith('Promo usage exhausted:')) {
+            status = 409;
+            reason = 'promo_exhausted';
+        }
+        response.status(status).json({
             ok: false,
             orderId: null,
-            reason: detail.startsWith('Product unavailable:') ? 'product_unavailable' : 'internal_error',
+            reason,
             detail,
         });
     }
@@ -1253,7 +1237,12 @@ function isValidPromoInput(value) {
         (promo.usageLimit === null ||
             (typeof promo.usageLimit === 'number' &&
                 Number.isInteger(promo.usageLimit) &&
-                promo.usageLimit >= 0)));
+                promo.usageLimit >= 0)) &&
+        (promo.usageCount === undefined ||
+            promo.usageCount === null ||
+            (typeof promo.usageCount === 'number' &&
+                Number.isInteger(promo.usageCount) &&
+                promo.usageCount >= 0)));
 }
 function isValidProductInput(value) {
     if (!value || typeof value !== 'object') {
@@ -1525,23 +1514,6 @@ async function sendTelegramOrderCompletedMessage(botToken, telegramUserId, order
         throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`);
     }
 }
-async function sendTelegramBroadcastMessage(botToken, chatId, text) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-    }),
-  });
-
-  if (!response.ok) {
-    const bodyText = await response.text();
-    throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`);
-  }
-}
 async function sendTelegramOrderReadyForMeetupMessage(botToken, telegramUserId, orderId) {
     const lines = [
         `Order ${orderId} is meetup-ready.`,
@@ -1673,4 +1645,58 @@ async function sendTelegramHelpMessage(botToken, chatId) {
         const bodyText = await response.text();
         throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`);
     }
+}
+async function sendTelegramBroadcastMessage(botToken, chatId, text) {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            chat_id: chatId,
+            text,
+        }),
+    });
+    if (!response.ok) {
+        const bodyText = await response.text();
+        throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`);
+    }
+}
+async function upsertTelegramSubscriberFromUpdate(body) {
+    const message = body?.message;
+    const from = message?.from;
+    const chat = message?.chat;
+    const telegramUserId = typeof from?.id === 'number' ? from.id : null;
+    const chatId = typeof chat?.id === 'number' ? chat.id : null;
+    const username = typeof from?.username === 'string' ? from.username : null;
+    const firstName = typeof from?.first_name === 'string' ? from.first_name : null;
+    if (!telegramUserId || !chatId) {
+        return;
+    }
+    const db = getFirestore();
+    const docRef = db.collection('telegramSubscribers').doc(String(telegramUserId));
+    await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(docRef);
+        const now = FieldValue.serverTimestamp();
+        if (!snapshot.exists) {
+            transaction.set(docRef, {
+                telegramUserId,
+                chatId,
+                username,
+                firstName,
+                isAdmin: false,
+                allowBroadcasts: true,
+                createdAt: now,
+                lastSeenAt: now,
+            });
+        }
+        else {
+            transaction.set(docRef, {
+                chatId,
+                username,
+                firstName,
+                lastSeenAt: now,
+            }, { merge: true });
+        }
+    });
 }

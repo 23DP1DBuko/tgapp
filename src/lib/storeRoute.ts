@@ -6,8 +6,9 @@ export type StoreScreen =
   | 'cart'
   | 'checkout'
   | 'success'
+  | 'rewards'
 
-export type AdminSubView = 'overview' | 'products' | 'promos' | 'orders' | 'broadcasts'
+export type AdminSubView = 'overview' | 'products' | 'promos' | 'orders' | 'broadcasts' | 'campaigns' | 'rewards' | 'dashboard'
 
 export type RouteState = {
   activeView: 'store' | 'admin'
@@ -78,7 +79,8 @@ export function isStoreScreen(value?: string): value is StoreScreen {
     value === 'orders' ||
     value === 'cart' ||
     value === 'checkout' ||
-    value === 'success'
+    value === 'success' ||
+    value === 'rewards'
   )
 }
 
@@ -88,7 +90,10 @@ export function isAdminSubview(value?: string): value is AdminSubView {
     value === 'products' ||
     value === 'promos' ||
     value === 'orders' ||
-    value === 'broadcasts'
+    value === 'broadcasts' ||
+    value === 'campaigns' ||
+    value === 'rewards' ||
+    value === 'dashboard'
   )
 }
 

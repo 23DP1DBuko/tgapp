@@ -1,12 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AppShell } from '../components/layout/AppShell'
-import { AdminStatusPanel } from '../components/admin/AdminStatusPanel'
+import { AdminDashboard } from '../components/admin/AdminDashboard'
 import { NotificationBanner } from '../components/ui/NotificationBanner'
 import { CartPanel } from '../components/cart/CartPanel'
 import { StoreCatalogPanel } from '../components/product/StoreCatalogPanel'
 import { StoreControlsPanel } from '../components/store/StoreControlsPanel'
-import { StoreStickyCartBar } from '../components/store/StoreStickyCartBar'
 import { useCart } from '../hooks/useCart'
 import { useCheckout } from '../hooks/useCheckout'
 import { useLikes } from '../hooks/useLikes'
@@ -26,15 +25,18 @@ import {
   readRouteFromHash,
 } from '../lib/storeRoute'
 import { getTelegramWebAppState } from '../lib/telegram/webApp'
+import {
+  listBannerSlides,
+} from '../lib/firebase/bannerSlides'
+import { fetchAdminAnalytics } from '../lib/firebase/analytics'
+import type {
+  AnalyticsResult,
+} from '../lib/firebase/analytics'
 import type {
   CheckoutSuccessSnapshot,
 } from '../types/cart'
+import type { BannerSlide } from '../types/bannerSlide'
 import type { Product, ProductCategory } from '../types/product'
-
-const ProductAdminPanel = lazy(async () => {
-  const module = await import('../components/product/ProductAdminPanel')
-  return { default: module.ProductAdminPanel }
-})
 
 const ProductDetailPanel = lazy(async () => {
   const module = await import('../components/product/ProductDetailPanel')
@@ -46,30 +48,15 @@ const CheckoutPanel = lazy(async () => {
   return { default: module.CheckoutPanel }
 })
 
-const PromoAdminPanel = lazy(async () => {
-  const module = await import('../components/promo/PromoAdminPanel')
-  return { default: module.PromoAdminPanel }
-})
-
-const OrderAdminPanel = lazy(async () => {
-  const module = await import('../components/order/OrderAdminPanel')
-  return { default: module.OrderAdminPanel }
-})
-
-const AdminOverviewPanel = lazy(async () => {
-  const module = await import('../components/admin/AdminOverviewPanel')
-  return { default: module.AdminOverviewPanel }
-})
-
 const BuyerOrdersPanel = lazy(async () => {
   const module = await import('../components/order/BuyerOrdersPanel')
   return { default: module.BuyerOrdersPanel }
 })
-const BroadcastAdminPanel = lazy(async () => {
-  const module = await import('../components/broadcast/BroadcastAdminPanel')
-  return { default: module.BroadcastAdminPanel }
-})
 
+const RewardsTasksPanel = lazy(async () => {
+  const module = await import('../components/rewards/RewardsTasksPanel')
+  return { default: module.RewardsTasksPanel }
+})
 const CHECKOUT_SUCCESS_STORAGE_KEY = 'yungwear-checkout-success'
 
 type PersistedCheckoutSuccessState = {
@@ -97,10 +84,17 @@ export function HomePage() {
   const hasTelegramBuyerAccess = Boolean(isTelegram && initData && user)
   const [activeView, setActiveView] = useState<'store' | 'admin'>(initialRoute.activeView)
   const [storeScreen, setStoreScreen] = useState<
-    'catalog' | 'product' | 'likes' | 'orders' | 'cart' | 'checkout' | 'success'
+    'catalog' | 'product' | 'likes' | 'orders' | 'cart' | 'checkout' | 'success' | 'rewards'
   >(initialStoreScreen)
   const [adminSubView, setAdminSubView] = useState<
-    'overview' | 'products' | 'promos' | 'orders' | 'broadcasts'
+    | 'overview'
+    | 'products'
+    | 'promos'
+    | 'orders'
+    | 'broadcasts'
+    | 'campaigns'
+    | 'rewards'
+    | 'dashboard'
   >(initialRoute.adminSubView)
   const [storeCollectionView, setStoreCollectionView] = useState<'all' | 'liked'>('all')
   const [storeSortMode, setStoreSortMode] = useState<'latest' | 'trending'>('latest')
@@ -116,6 +110,8 @@ export function HomePage() {
   const [canManageProducts, setCanManageProducts] = useState(
     !user ? canUseBrowserAdminFallback() : false,
   )
+  const [bannerSlides, setBannerSlides] = useState<BannerSlide[]>([])
+  const [analytics, setAnalytics] = useState<AnalyticsResult | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
   const [promoCodeRaw, setPromoCodeRaw] = useState('')
 
@@ -293,10 +289,49 @@ export function HomePage() {
 
     return likedProductIds.includes(selectedProduct.id)
   }, [likedProductIds, selectedProduct])
-  const shouldShowStickyCartBar =
-    activeView === 'store' &&
-    cartCount > 0 &&
-    (storeScreen === 'catalog' || storeScreen === 'product' || storeScreen === 'likes')
+  // Load banner slides for the hero carousel
+  useEffect(() => {
+    let isCancelled = false
+
+    async function loadBannerSlides() {
+      try {
+        const slides = await listBannerSlides(20)
+        if (!isCancelled) {
+          setBannerSlides(slides)
+        }
+      } catch {
+        // Silently fall back to hardcoded carousel slides
+      }
+    }
+
+    void loadBannerSlides()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  // Fetch analytics when admin view is active
+  useEffect(() => {
+    if (activeView !== 'admin' || !canManageProducts || !initData) {
+      return
+    }
+
+    let isCancelled = false
+
+    async function loadAnalytics() {
+      try {
+        const data = await fetchAdminAnalytics(initData)
+        if (!isCancelled) setAnalytics(data)
+      } catch {
+        // Fall back to local defaults
+      }
+    }
+
+    void loadAnalytics()
+
+    return () => { isCancelled = true }
+  }, [activeView, canManageProducts, initData])
 
   // --- Effects ---
 
@@ -439,11 +474,19 @@ export function HomePage() {
       storeScreen === 'orders' ||
       storeScreen === 'cart' ||
       storeScreen === 'checkout' ||
-      storeScreen === 'success'
+      storeScreen === 'success' ||
+      storeScreen === 'rewards'
     ) {
       setStoreScreen('catalog')
     }
   }, [hasTelegramBuyerAccess, storeScreen])
+
+  // Smooth-scroll to top when navigating to the catalog, likes, or rewards view
+  useEffect(() => {
+    if (storeScreen === 'catalog' || storeScreen === 'likes' || storeScreen === 'rewards') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [storeScreen])
 
   // --- Event handlers ---
 
@@ -490,10 +533,35 @@ export function HomePage() {
     setStoreScreen('cart')
   }
 
+  function handleOpenRewards() {
+    if (!requireTelegramAccess('Rewards')) {
+      return
+    }
+
+    setStoreScreen('rewards')
+  }
+
 return (
   <AppShell
     title="YUNGWEAR"
-    isTelegram={isTelegram}
+    bottomNavVisible={activeView === 'store' && storeScreen !== 'checkout' && storeScreen !== 'success'}
+    storeScreen={storeScreen}
+    likedCount={likedCount}
+    cartCount={cartCount}
+    onOpenCatalog={handleOpenCatalog}
+    onOpenLikes={handleOpenLikes}
+    onOpenOrders={handleOpenMyOrders}
+    onOpenCart={handleOpenCart}
+    onOpenRewards={handleOpenRewards}
+    onTripleTap={() => {
+      if (activeView === 'admin') {
+        setActiveView('store')
+        setStoreScreen('catalog')
+      } else {
+        setActiveView('admin')
+        setAdminSubView('overview')
+      }
+    }}
   >
     <section className="space-y-4">
 
@@ -504,59 +572,13 @@ return (
         />
       )}
 
-      {/* Store / Admin tab switcher */}
-      <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveView('store')
-              setStoreScreen('catalog')
-            }}
-            className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-              activeView === 'store'
-                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                : 'bg-white/6 text-[var(--shop-muted)]'
-            }`}
-          >
-            <span>Store</span>
-            {cartCount > 0 && (
-              <span className="rounded-full bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-white/85">
-                {cartCount} Cart
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveView('admin')
-              setAdminSubView('overview')
-            }}
-            className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-              activeView === 'admin'
-                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                : 'bg-white/6 text-[var(--shop-muted)]'
-            }`}
-          >
-            Admin
-          </button>
-        </div>
-      </article>
-
       {/* Store view */}
       {activeView === 'store' ? (
         <>
           <StoreControlsPanel
             telegramGateMessage={telegramGateMessage}
             telegramBotLink={buildTelegramBotLink()}
-            storeScreen={storeScreen}
-            likedCount={likedCount}
-            cartCount={cartCount}
             onCloseGate={() => setTelegramGateMessage(null)}
-            onOpenCatalog={handleOpenCatalog}
-            onOpenLikes={handleOpenLikes}
-            onOpenOrders={handleOpenMyOrders}
-            onOpenCart={handleOpenCart}
           />
 
           {(storeScreen === 'catalog' || storeScreen === 'likes') ? (
@@ -588,7 +610,9 @@ return (
                 setStoreCollectionView('liked')
                 handleOpenProduct(productId)
               }}
+              onRefresh={reloadProducts}
               onToggleLike={handleToggleLike}
+              bannerSlides={bannerSlides}
             />
           ) : null}
 
@@ -643,6 +667,16 @@ return (
             </>
           ) : null}
 
+          {storeScreen === 'rewards' ? (
+            <Suspense fallback={<StorePanelLoadingState label="Rewards" />}>
+              <RewardsTasksPanel
+                initData={initData}
+                hasTelegramAccess={hasTelegramBuyerAccess}
+                onBack={handleOpenCatalog}
+              />
+            </Suspense>
+          ) : null}
+
           {storeScreen === 'orders' ? (
             <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
               {user?.id ? (
@@ -691,132 +725,25 @@ return (
             </>
           ) : null}
 
-          {shouldShowStickyCartBar ? (
-            <StoreStickyCartBar
-              itemCount={cartCount}
-              total={checkoutTotal}
-              onOpenCart={handleOpenCart}
-            />
-          ) : null}
         </>
       ) : (
-        <>
-          {/* Admin stats strip */}
-          <article className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Products</p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">{products.length}</p>
-              </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Sold</p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
-                  {products.filter((p) => !p.isAvailable).length}
-                </p>
-              </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 px-3 py-4 backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Mode</p>
-                <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">Admin</p>
-              </div>
-            </div>
-          </article>
-
-          <AdminStatusPanel
-            isTelegram={isTelegram}
-            user={user}
-          />
-
-          {isAdminAccessLoading ? (
-            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">Admin Access</p>
-              <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">Verifying Telegram admin access…</p>
-            </article>
-          ) : canManageProducts ? (
-            <>
-              <article className="rounded-[28px] border border-white/10 bg-white/6 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl">
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      ['overview', 'Overview'],
-                      ['products', 'Products'],
-                      ['promos', 'Promos'],
-                      ['orders', 'Orders'],
-                      ['broadcasts', 'Broadcasts'],
-                    ] as const
-                  ).map(([view, label]) => (
-                    <button
-                      key={view}
-                      type="button"
-                      onClick={() => setAdminSubView(view)}
-                      className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                        adminSubView === view
-                          ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                          : 'bg-white/6 text-[var(--shop-muted)]'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </article>
-
-              <Suspense fallback={<AdminPanelsLoadingState />}>
-                {adminSubView === 'overview' ? (
-                  <AdminOverviewPanel
-                    productCount={products.length}
-                    availableCount={products.filter((p) => p.isAvailable).length}
-                    soldCount={products.filter((p) => !p.isAvailable).length}
-                    onOpenProducts={() => setAdminSubView('products')}
-                    onOpenPromos={() => setAdminSubView('promos')}
-                    onOpenOrders={() => setAdminSubView('orders')}
-                    onOpenBroadcasts={() => setAdminSubView('broadcasts')}
-                  />
-                ) : null}
-                {adminSubView === 'products' ? (
-                  <ProductAdminPanel
-                    initData={initData}
-                    products={products}
-                    onProductsChanged={reloadProducts}
-                  />
-                ) : null}
-                {adminSubView === 'promos' ? (
-                  <PromoAdminPanel initData={initData} isEnabled={canManageProducts} />
-                ) : null}
-                {adminSubView === 'orders' ? (
-                  <OrderAdminPanel initData={initData} isEnabled={canManageProducts} />
-                ) : null}
-                {adminSubView === 'broadcasts' ? (
-                  <BroadcastAdminPanel />
-                ) : null}
-              </Suspense>
-            </>
-          ) : (
-            <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">Admin Access</p>
-              <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">
-                Admin tools are restricted. Open the Mini App in Telegram with an authorized account.
-              </p>
-            </article>
-          )}
-        </>
+        <AdminDashboard
+          products={products}
+          analytics={analytics ?? undefined}
+          initData={initData}
+          isTelegram={isTelegram}
+          user={user}
+          isAdminAccessLoading={isAdminAccessLoading}
+          canManageProducts={canManageProducts}
+          adminSubView={adminSubView}
+          onSelectSubView={setAdminSubView}
+          onProductsChanged={reloadProducts}
+        />
       )}
 
     </section>
   </AppShell>
 )
-}
-
-function AdminPanelsLoadingState() {
-  return (
-    <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-      <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-        Admin Modules
-      </p>
-      <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">
-        Loading product, promo, and order management tools...
-      </p>
-    </article>
-  )
 }
 
 type StorePanelLoadingStateProps = {

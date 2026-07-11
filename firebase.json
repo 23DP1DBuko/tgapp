@@ -93,15 +93,85 @@
           "region": "us-central1"
         }
       },
-      {
-        "source": "/api/admin/deleteProductImages",
-        "function": {
-          "functionId": "deleteProductImagesAdmin",
-          "region": "us-central1"
-        }
-      },
-      {
-        "source": "/api/telegram/webhook",
+    {
+      "source": "/api/admin/deleteProductImages",
+      "function": {
+        "functionId": "deleteProductImagesAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/sendBroadcast",
+      "function": {
+        "functionId": "broadcastMessageAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/uploadBannerImage",
+      "function": {
+        "functionId": "uploadBannerImageAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/analytics",
+      "function": {
+        "functionId": "getAdminAnalytics",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/upsertCampaign",
+      "function": {
+        "functionId": "upsertCampaignAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/deleteCampaigns",
+      "function": {
+        "functionId": "deleteCampaignsAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/reorderCampaigns",
+      "function": {
+        "functionId": "reorderCampaignsAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/upsertTask",
+      "function": {
+        "functionId": "upsertTaskAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/deleteTasks",
+      "function": {
+        "functionId": "deleteTasksAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/upsertGiveaway",
+      "function": {
+        "functionId": "upsertGiveawayAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/admin/deleteGiveaways",
+      "function": {
+        "functionId": "deleteGiveawaysAdmin",
+        "region": "us-central1"
+      }
+    },
+    {
+      "source": "/api/telegram/webhook",
         "function": {
           "functionId": "telegramBotWebhook",
           "region": "us-central1"

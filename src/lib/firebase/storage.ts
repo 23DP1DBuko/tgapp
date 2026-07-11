@@ -1,5 +1,6 @@
 const DEFAULT_ADMIN_UPLOAD_PRODUCT_IMAGE_URL = '/api/admin/uploadProductImage'
 const DEFAULT_ADMIN_DELETE_PRODUCT_IMAGES_URL = '/api/admin/deleteProductImages'
+const DEFAULT_ADMIN_UPLOAD_BANNER_IMAGE_URL = '/api/admin/uploadBannerImage'
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 type UploadProductImageAdminResponse = {
@@ -144,4 +145,49 @@ export async function deleteProductImages(
       `Failed to delete product images: ${result.reason ?? 'invalid backend response'}.`,
     )
   }
+}
+
+type UploadBannerImageResponse = {
+  ok?: boolean
+  imageUrl?: string | null
+  reason?: string
+}
+
+export async function uploadBannerImage(
+  initData: string,
+  file: File,
+): Promise<string> {
+  validateImageFile(file)
+
+  const base64Data = await fileToBase64(file)
+
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_UPLOAD_BANNER_IMAGE_URL ||
+      DEFAULT_ADMIN_UPLOAD_BANNER_IMAGE_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        fileName: file.name,
+        contentType: file.type,
+        base64Data,
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    const reason = await readErrorReason(response)
+    throw new Error(`Failed to upload banner image: ${reason}.`)
+  }
+
+  const result = (await response.json()) as UploadBannerImageResponse
+
+  if (!result.ok || typeof result.imageUrl !== 'string' || !result.imageUrl) {
+    throw new Error('Failed to upload banner image: invalid backend response.')
+  }
+
+  return result.imageUrl
 }

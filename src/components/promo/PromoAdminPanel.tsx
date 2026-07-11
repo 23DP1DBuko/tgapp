@@ -222,29 +222,37 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 
   return (
     <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.94),rgba(18,10,22,0.96))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Promo Codes
-          </p>
-          <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            Create and edit checkout discount codes directly from the admin view.
-          </p>
+      {/* ── Header: title + destructive actions ── */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+          Promo Codes
+        </p>
+        <div className="flex items-center gap-2">
+          {inactivePromos.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleDeleteInactivePromos}
+              disabled={isSubmitting}
+              className="rounded-full border border-[var(--shop-red)]/30 bg-[var(--shop-red)]/12 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:opacity-50"
+            >
+              Clear Inactive ({inactivePromos.length})
+            </button>
+          ) : null}
+          <span className="rounded-full bg-[var(--shop-purple)]/22 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
+            Admin
+          </span>
         </div>
-        <span className="rounded-full bg-[var(--shop-purple)]/22 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-cream)]">
-          Admin
-        </span>
       </div>
 
-      <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
+      <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Mode
           </span>
           <select
             value={selectedPromoId}
             onChange={(event) => handlePromoSelection(event.target.value)}
-            className={inputClassName}
+            className={darkSelectClassName}
           >
             <option value="new">Create new promo code</option>
             {promos.map((promo) => {
@@ -265,7 +273,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Code
             </span>
             <input
@@ -279,7 +287,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Discount Value
             </span>
             <input
@@ -296,7 +304,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Discount Type
             </span>
             <select
@@ -307,7 +315,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
                   discountType: event.target.value as PromoDiscountType,
                 }))
               }
-              className={inputClassName}
+              className={darkSelectClassName}
             >
               {PROMO_DISCOUNT_TYPES.map((type) => (
                 <option key={type} value={type}>
@@ -319,7 +327,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Usage Limit
             </span>
             <input
@@ -375,7 +383,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
         </div>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Expires At
           </span>
           <input
@@ -388,16 +396,25 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
           />
         </label>
 
-        <label className="flex items-center gap-3 rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)]">
-          <input
-            type="checkbox"
-            checked={form.isActive}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, isActive: event.target.checked }))
+        <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
+          <span className="text-sm text-[var(--shop-cream)]">Promo code is active</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.isActive}
+            onClick={() =>
+              setForm((current) => ({ ...current, isActive: !current.isActive }))
             }
-            className="h-4 w-4 accent-zinc-900"
-          />
-          Promo code is active
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+              form.isActive ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
+            }`}
+          >
+            <span
+              className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
+                form.isActive ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
         </label>
 
         {feedbackMessage ? (
@@ -421,13 +438,17 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+          className={`w-full rounded-2xl px-4 py-3 text-sm font-bold uppercase tracking-[0.2em] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+            selectedPromo
+              ? 'border-2 border-[var(--shop-purple)] bg-[var(--shop-purple)]/12 text-[var(--shop-purple)]'
+              : 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)]'
+          }`}
         >
           {isSubmitting
-            ? 'Saving Promo Code...'
+            ? 'Saving...'
             : selectedPromo
-              ? 'Save Promo Code Changes'
-              : 'Create Promo Code'}
+              ? 'SAVE CHANGES'
+              : 'CREATE PROMO'}
         </button>
 
         {selectedPromo ? (
@@ -440,15 +461,6 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             Delete Promo Code
           </button>
         ) : null}
-
-        <button
-          type="button"
-          onClick={handleDeleteInactivePromos}
-          disabled={isSubmitting || inactivePromos.length === 0}
-          className="w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm font-semibold text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Delete Inactive Promos ({inactivePromos.length})
-        </button>
       </form>
     </article>
   )
@@ -456,3 +468,6 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 
 const inputClassName =
   'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
+
+const darkSelectClassName =
+  'w-full rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition focus:border-[var(--shop-red)]'

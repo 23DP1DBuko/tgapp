@@ -316,6 +316,172 @@ export type DeleteProductImagesAdminResponse = {
     | 'internal_error'
 }
 
+export type UploadBannerImageAdminRequest = {
+  initData: string
+  fileName: string
+  contentType: string
+  base64Data: string
+}
+
+export type UploadBannerImageAdminResponse = {
+  ok: boolean
+  imageUrl: string | null
+  storagePath: string | null
+  detail?: string
+  reason:
+    | 'uploaded'
+    | 'invalid_method'
+    | 'invalid_payload'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+export type AdminAnalyticsRequest = {
+  initData: string
+}
+
+export type AdminAnalyticsResponse = {
+  ok: boolean
+  totalUsers: number
+  itemsSold: number
+  grossRevenueEur: number
+  referralCount: number
+  detail?: string
+  reason:
+    | 'listed'
+    | 'invalid_method'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+// ── Campaign Admin Types ──
+
+export type CampaignAdminInput = {
+  tag: string
+  headingPart1: string
+  headingPart2: string
+  subtitle: string
+  isActive: boolean
+  sortOrder: number
+}
+
+export type UpsertCampaignAdminRequest = {
+  initData: string
+  campaignId?: string
+  campaign: CampaignAdminInput
+}
+
+// Reorder takes an ordered list of IDs (sortOrder = index)
+export type ReorderCampaignsAdminRequest = {
+  initData: string
+  orderedIds: string[]
+}
+
+export type CampaignAdminResponse = {
+  ok: boolean
+  campaignId: string | null
+  detail?: string
+  reason:
+    | 'saved'
+    | 'deleted'
+    | 'reordered'
+    | 'invalid_method'
+    | 'invalid_payload'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+export type DeleteCampaignsAdminRequest = {
+  initData: string
+  campaignIds: string[]
+}
+
+// ── Task Admin Types ──
+
+export type TaskAdminInput = {
+  title: string
+  rewardType: 'coupon' | 'ticket'
+  rewardValue: string
+  status: 'active' | 'inactive'
+  sortOrder: number
+}
+
+export type UpsertTaskAdminRequest = {
+  initData: string
+  taskId?: string
+  task: TaskAdminInput
+}
+
+export type TaskAdminResponse = {
+  ok: boolean
+  taskId: string | null
+  detail?: string
+  reason:
+    | 'saved'
+    | 'deleted'
+    | 'invalid_method'
+    | 'invalid_payload'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+export type DeleteTasksAdminRequest = {
+  initData: string
+  taskIds: string[]
+}
+
+// ── Giveaway Admin Types ──
+
+export type GiveawayAdminInput = {
+  productId: string
+  productName: string
+  productImage: string
+  totalTickets: number
+  enteredCount: number
+  endsAt: string | null
+  isActive: boolean
+  winnerUsername: string | null
+}
+
+export type UpsertGiveawayAdminRequest = {
+  initData: string
+  giveawayId?: string
+  giveaway: GiveawayAdminInput
+}
+
+export type GiveawayAdminResponse = {
+  ok: boolean
+  giveawayId: string | null
+  detail?: string
+  reason:
+    | 'saved'
+    | 'deleted'
+    | 'invalid_method'
+    | 'invalid_payload'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+export type DeleteGiveawaysAdminRequest = {
+  initData: string
+  giveawayIds: string[]
+}
+
 type TelegramInitDataUser = {
   id?: number
   [key: string]: unknown
@@ -431,6 +597,7 @@ export const telegramBotWebhook = onRequest(
     }
 
     if (isStartCommand(messageText)) {
+      await upsertTelegramSubscriberFromUpdate(body)
       try {
         await sendTelegramStoreWelcomeMessage(
           botToken,
@@ -474,6 +641,163 @@ export const telegramBotWebhook = onRequest(
     }
 
     response.status(200).json({ ok: true })
+  },
+)
+
+export type BroadcastAdminRequest = {
+  initData: string
+  text: string
+}
+
+export type BroadcastAdminResponse = {
+  ok: boolean
+  sentCount: number
+  failedCount: number
+  broadcastId?: string
+  detail?: string
+  reason:
+    | 'broadcast_sent'
+    | 'invalid_method'
+    | 'invalid_payload'
+    | 'invalid_init_data'
+    | 'expired_init_data'
+    | 'missing_bot_token'
+    | 'forbidden'
+    | 'internal_error'
+}
+
+export const broadcastMessageAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason: 'invalid_method',
+      } satisfies BroadcastAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason: 'missing_bot_token',
+      } satisfies BroadcastAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<BroadcastAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const text = typeof body?.text === 'string' ? body.text.trim() : ''
+
+    if (!text || text.length > 2000) {
+      response.status(400).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason: 'invalid_payload',
+      } satisfies BroadcastAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies BroadcastAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason: 'forbidden',
+      } satisfies BroadcastAdminResponse)
+      return
+    }
+
+    try {
+      const db = getFirestore()
+
+      const snapshot = await db
+        .collection('telegramSubscribers')
+        .where('allowBroadcasts', '==', true)
+        .get()
+
+      let sentCount = 0
+      let failedCount = 0
+
+      for (const doc of snapshot.docs) {
+        const data = doc.data()
+        const chatId = typeof data.chatId === 'number' ? data.chatId : null
+
+        if (!chatId) continue
+
+        try {
+          await sendTelegramBroadcastMessage(botToken, chatId, text)
+          sentCount += 1
+        } catch {
+          failedCount += 1
+        }
+      }
+
+      const createdBy =
+        typeof verificationResult.user.id === 'number'
+          ? verificationResult.user.id
+          : null
+      const reason = 'broadcast_sent'
+
+      let broadcastId: string | null = null
+
+      try {
+        const broadcastRef = await db.collection('broadcasts').add({
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy,
+          sentCount,
+          failedCount,
+          reason,
+          text,
+        })
+
+        broadcastId = broadcastRef.id
+      } catch (error) {
+        console.error('Failed to log broadcast to Firestore', error)
+      }
+
+      response.status(200).json({
+        ok: true,
+        sentCount,
+        failedCount,
+        broadcastId: broadcastId ?? undefined,
+        reason,
+      } satisfies BroadcastAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        sentCount: 0,
+        failedCount: 0,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies BroadcastAdminResponse)
+    }
   },
 )
 
@@ -1431,7 +1755,7 @@ export const uploadProductImageAdmin = onRequest(
     const contentType = typeof body?.contentType === 'string' ? body.contentType.trim() : ''
     const base64Data = typeof body?.base64Data === 'string' ? body.base64Data.trim() : ''
 
-    if (!isValidUploadProductImagePayload({ fileName, contentType, base64Data })) {
+    if (!isValidUploadImagePayload({ fileName, contentType, base64Data })) {
       response.status(400).json({
         ok: false,
         imageUrl: null,
@@ -1604,6 +1928,686 @@ export const deleteProductImagesAdmin = onRequest(
         reason: 'internal_error',
         detail: error instanceof Error ? error.message : 'Unknown backend error.',
       } satisfies DeleteProductImagesAdminResponse)
+    }
+  },
+)
+
+// ── Campaign Admin Functions ──
+
+export const upsertCampaignAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        campaignId: null,
+        reason: 'invalid_method',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        campaignId: null,
+        reason: 'missing_bot_token',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<UpsertCampaignAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const campaignId = typeof body?.campaignId === 'string' ? body.campaignId.trim() : ''
+    const campaign = body?.campaign
+
+    if (!isValidCampaignInput(campaign)) {
+      response.status(400).json({
+        ok: false,
+        campaignId: campaignId || null,
+        reason: 'invalid_payload',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        campaignId: campaignId || null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        campaignId: campaignId || null,
+        reason: 'forbidden',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    try {
+      const payload = {
+        tag: campaign.tag.trim(),
+        headingPart1: campaign.headingPart1.trim(),
+        headingPart2: campaign.headingPart2.trim(),
+        subtitle: campaign.subtitle.trim(),
+        isActive: campaign.isActive,
+        sortOrder: campaign.sortOrder,
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (campaignId) {
+        await getFirestore().collection('campaigns').doc(campaignId).set(payload, { merge: true })
+
+        response.status(200).json({
+          ok: true,
+          campaignId,
+          reason: 'saved',
+        } satisfies CampaignAdminResponse)
+        return
+      }
+
+      const createdCampaign = await getFirestore().collection('campaigns').add({
+        ...payload,
+        createdAt: new Date().toISOString(),
+      })
+
+      response.status(200).json({
+        ok: true,
+        campaignId: createdCampaign.id,
+        reason: 'saved',
+      } satisfies CampaignAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        campaignId: campaignId || null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies CampaignAdminResponse)
+    }
+  },
+)
+
+export const deleteCampaignsAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        campaignId: null,
+        reason: 'invalid_method',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        campaignId: null,
+        reason: 'missing_bot_token',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<DeleteCampaignsAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const campaignIds =
+      body?.campaignIds?.filter((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? []
+
+    if (campaignIds.length === 0) {
+      response.status(400).json({
+        ok: false,
+        campaignId: null,
+        reason: 'invalid_payload',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        campaignId: null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        campaignId: null,
+        reason: 'forbidden',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    try {
+      const batch = getFirestore().batch()
+      campaignIds.forEach((id) => {
+        batch.delete(getFirestore().collection('campaigns').doc(id))
+      })
+      await batch.commit()
+
+      response.status(200).json({
+        ok: true,
+        campaignId: campaignIds[0] ?? null,
+        reason: 'deleted',
+      } satisfies CampaignAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        campaignId: campaignIds[0] ?? null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies CampaignAdminResponse)
+    }
+  },
+)
+
+export const reorderCampaignsAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        campaignId: null,
+        reason: 'invalid_method',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        campaignId: null,
+        reason: 'missing_bot_token',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<ReorderCampaignsAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const orderedIds =
+      body?.orderedIds?.filter((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? []
+
+    if (orderedIds.length === 0) {
+      response.status(400).json({
+        ok: false,
+        campaignId: null,
+        reason: 'invalid_payload',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        campaignId: null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        campaignId: null,
+        reason: 'forbidden',
+      } satisfies CampaignAdminResponse)
+      return
+    }
+
+    try {
+      const db = getFirestore()
+      const now = new Date().toISOString()
+      const updates = orderedIds.map((id, index) =>
+        db.collection('campaigns').doc(id).update({
+          sortOrder: index,
+          updatedAt: now,
+        }),
+      )
+      await Promise.all(updates)
+
+      response.status(200).json({
+        ok: true,
+        campaignId: orderedIds[0] ?? null,
+        reason: 'reordered',
+      } satisfies CampaignAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        campaignId: orderedIds[0] ?? null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies CampaignAdminResponse)
+    }
+  },
+)
+
+// ── Task Admin Functions ──
+
+export const upsertTaskAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        taskId: null,
+        reason: 'invalid_method',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        taskId: null,
+        reason: 'missing_bot_token',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<UpsertTaskAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const taskId = typeof body?.taskId === 'string' ? body.taskId.trim() : ''
+    const task = body?.task
+
+    if (!isValidTaskInput(task)) {
+      response.status(400).json({
+        ok: false,
+        taskId: taskId || null,
+        reason: 'invalid_payload',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        taskId: taskId || null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        taskId: taskId || null,
+        reason: 'forbidden',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    try {
+      const payload = {
+        title: task.title.trim(),
+        rewardType: task.rewardType,
+        rewardValue: task.rewardValue.trim(),
+        status: task.status,
+        sortOrder: task.sortOrder,
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (taskId) {
+        await getFirestore().collection('tasks').doc(taskId).set(payload, { merge: true })
+
+        response.status(200).json({
+          ok: true,
+          taskId,
+          reason: 'saved',
+        } satisfies TaskAdminResponse)
+        return
+      }
+
+      const createdTask = await getFirestore().collection('tasks').add({
+        ...payload,
+        createdAt: new Date().toISOString(),
+      })
+
+      response.status(200).json({
+        ok: true,
+        taskId: createdTask.id,
+        reason: 'saved',
+      } satisfies TaskAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        taskId: taskId || null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies TaskAdminResponse)
+    }
+  },
+)
+
+export const deleteTasksAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        taskId: null,
+        reason: 'invalid_method',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        taskId: null,
+        reason: 'missing_bot_token',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<DeleteTasksAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const taskIds =
+      body?.taskIds?.filter((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? []
+
+    if (taskIds.length === 0) {
+      response.status(400).json({
+        ok: false,
+        taskId: null,
+        reason: 'invalid_payload',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        taskId: null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        taskId: null,
+        reason: 'forbidden',
+      } satisfies TaskAdminResponse)
+      return
+    }
+
+    try {
+      const batch = getFirestore().batch()
+      taskIds.forEach((id) => {
+        batch.delete(getFirestore().collection('tasks').doc(id))
+      })
+      await batch.commit()
+
+      response.status(200).json({
+        ok: true,
+        taskId: taskIds[0] ?? null,
+        reason: 'deleted',
+      } satisfies TaskAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        taskId: taskIds[0] ?? null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies TaskAdminResponse)
+    }
+  },
+)
+
+// ── Giveaway Admin Functions ──
+
+export const upsertGiveawayAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'invalid_method',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'missing_bot_token',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<UpsertGiveawayAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const giveawayId = typeof body?.giveawayId === 'string' ? body.giveawayId.trim() : ''
+    const giveaway = body?.giveaway
+
+    if (!isValidGiveawayInput(giveaway)) {
+      response.status(400).json({
+        ok: false,
+        giveawayId: giveawayId || null,
+        reason: 'invalid_payload',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        giveawayId: giveawayId || null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        giveawayId: giveawayId || null,
+        reason: 'forbidden',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    try {
+      const payload = {
+        productId: giveaway.productId.trim(),
+        productName: giveaway.productName.trim(),
+        productImage: giveaway.productImage.trim(),
+        totalTickets: giveaway.totalTickets,
+        enteredCount: giveaway.enteredCount,
+        endsAt: giveaway.endsAt || null,
+        isActive: giveaway.isActive,
+        winnerUsername: giveaway.winnerUsername || null,
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (giveawayId) {
+        await getFirestore().collection('giveaways').doc(giveawayId).set(payload, { merge: true })
+
+        response.status(200).json({
+          ok: true,
+          giveawayId,
+          reason: 'saved',
+        } satisfies GiveawayAdminResponse)
+        return
+      }
+
+      const createdGiveaway = await getFirestore().collection('giveaways').add({
+        ...payload,
+        createdAt: new Date().toISOString(),
+      })
+
+      response.status(200).json({
+        ok: true,
+        giveawayId: createdGiveaway.id,
+        reason: 'saved',
+      } satisfies GiveawayAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        giveawayId: giveawayId || null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies GiveawayAdminResponse)
+    }
+  },
+)
+
+export const deleteGiveawaysAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'invalid_method',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'missing_bot_token',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<DeleteGiveawaysAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const giveawayIds =
+      body?.giveawayIds?.filter((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? []
+
+    if (giveawayIds.length === 0) {
+      response.status(400).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'invalid_payload',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        giveawayId: null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        giveawayId: null,
+        reason: 'forbidden',
+      } satisfies GiveawayAdminResponse)
+      return
+    }
+
+    try {
+      const batch = getFirestore().batch()
+      giveawayIds.forEach((id) => {
+        batch.delete(getFirestore().collection('giveaways').doc(id))
+      })
+      await batch.commit()
+
+      response.status(200).json({
+        ok: true,
+        giveawayId: giveawayIds[0] ?? null,
+        reason: 'deleted',
+      } satisfies GiveawayAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        giveawayId: giveawayIds[0] ?? null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies GiveawayAdminResponse)
     }
   },
 )
@@ -1831,8 +2835,48 @@ function isSignalDelta(value: unknown): value is 1 | -1 {
   return value === 1 || value === -1
 }
 
-function isValidUploadProductImagePayload(
-  value: Partial<UploadProductImageAdminRequest>,
+function isValidCampaignInput(value: unknown): value is CampaignAdminInput {
+  if (!value || typeof value !== 'object') return false
+  const c = value as Partial<CampaignAdminInput>
+  return (
+    typeof c.tag === 'string' && c.tag.trim().length > 0 && c.tag.trim().length <= 80 &&
+    typeof c.headingPart1 === 'string' && c.headingPart1.trim().length > 0 && c.headingPart1.trim().length <= 120 &&
+    typeof c.headingPart2 === 'string' && c.headingPart2.trim().length <= 120 &&
+    typeof c.subtitle === 'string' && c.subtitle.trim().length <= 240 &&
+    typeof c.isActive === 'boolean' &&
+    typeof c.sortOrder === 'number' && Number.isFinite(c.sortOrder) && c.sortOrder >= 0
+  )
+}
+
+function isValidTaskInput(value: unknown): value is TaskAdminInput {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Partial<TaskAdminInput>
+  return (
+    typeof t.title === 'string' && t.title.trim().length > 0 && t.title.trim().length <= 120 &&
+    (t.rewardType === 'coupon' || t.rewardType === 'ticket') &&
+    typeof t.rewardValue === 'string' && t.rewardValue.trim().length > 0 && t.rewardValue.trim().length <= 60 &&
+    (t.status === 'active' || t.status === 'inactive') &&
+    typeof t.sortOrder === 'number' && Number.isFinite(t.sortOrder) && t.sortOrder >= 0
+  )
+}
+
+function isValidGiveawayInput(value: unknown): value is GiveawayAdminInput {
+  if (!value || typeof value !== 'object') return false
+  const g = value as Partial<GiveawayAdminInput>
+  return (
+    typeof g.productId === 'string' && g.productId.length <= 120 &&
+    typeof g.productName === 'string' && g.productName.trim().length > 0 && g.productName.trim().length <= 120 &&
+    typeof g.productImage === 'string' && g.productImage.length <= 2000 &&
+    typeof g.totalTickets === 'number' && Number.isInteger(g.totalTickets) && g.totalTickets >= 1 &&
+    typeof g.enteredCount === 'number' && Number.isInteger(g.enteredCount) && g.enteredCount >= 0 &&
+    (g.endsAt === null || typeof g.endsAt === 'string') &&
+    typeof g.isActive === 'boolean' &&
+    (g.winnerUsername === null || typeof g.winnerUsername === 'string')
+  )
+}
+
+function isValidUploadImagePayload(
+  value: Partial<Omit<UploadProductImageAdminRequest, 'initData'>>,
 ): value is Omit<UploadProductImageAdminRequest, 'initData'> {
   return (
     typeof value.fileName === 'string' &&
@@ -2214,3 +3258,311 @@ async function sendTelegramHelpMessage(
     throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`)
   }
 }
+
+async function sendTelegramBroadcastMessage(
+  botToken: string,
+  chatId: number,
+  text: string,
+) {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+    }),
+  })
+
+  if (!response.ok) {
+    const bodyText = await response.text()
+    throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`)
+  }
+}
+
+async function upsertTelegramSubscriberFromUpdate(body: TelegramWebhookRequest | undefined) {
+  const message = body?.message
+  const from = message?.from
+  const chat = message?.chat
+
+  const telegramUserId = typeof from?.id === 'number' ? from.id : null
+  const chatId = typeof chat?.id === 'number' ? chat.id : null
+  const username = typeof from?.username === 'string' ? from.username : null
+  const firstName = typeof from?.first_name === 'string' ? from.first_name : null
+
+  if (!telegramUserId || !chatId) {
+    return
+  }
+
+  const db = getFirestore()
+  const docRef = db.collection('telegramSubscribers').doc(String(telegramUserId))
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(docRef)
+    const now = FieldValue.serverTimestamp()
+
+    if (!snapshot.exists) {
+      transaction.set(docRef, {
+        telegramUserId,
+        chatId,
+        username,
+        firstName,
+        isAdmin: false,
+        allowBroadcasts: true,
+        createdAt: now,
+        lastSeenAt: now,
+      })
+    } else {
+      transaction.set(
+        docRef,
+        {
+          chatId,
+          username,
+          firstName,
+          lastSeenAt: now,
+        },
+        { merge: true },
+      )
+    }
+  })
+}
+
+export const uploadBannerImageAdmin = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason: 'invalid_method',
+      } satisfies UploadBannerImageAdminResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason: 'missing_bot_token',
+      } satisfies UploadBannerImageAdminResponse)
+      return
+    }
+
+    const body = request.body as Partial<UploadBannerImageAdminRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const fileName = typeof body?.fileName === 'string' ? body.fileName.trim() : ''
+    const contentType = typeof body?.contentType === 'string' ? body.contentType.trim() : ''
+    const base64Data = typeof body?.base64Data === 'string' ? body.base64Data.trim() : ''
+
+    if (!isValidUploadImagePayload({ fileName, contentType, base64Data })) {
+      response.status(400).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason: 'invalid_payload',
+      } satisfies UploadBannerImageAdminResponse)
+      return
+    }
+
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies UploadBannerImageAdminResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason: 'forbidden',
+      } satisfies UploadBannerImageAdminResponse)
+      return
+    }
+
+    try {
+      const safeName = sanitizeStorageFileName(fileName)
+      const storagePath = `banners/${Date.now()}-${crypto.randomUUID()}-${safeName}`
+      const downloadToken = crypto.randomUUID()
+      const buffer = Buffer.from(base64Data, 'base64')
+
+      if (buffer.byteLength === 0 || buffer.byteLength > 5 * 1024 * 1024) {
+        response.status(400).json({
+          ok: false,
+          imageUrl: null,
+          storagePath: null,
+          reason: 'invalid_payload',
+          detail: 'Image must be greater than 0 bytes and smaller than 5 MB.',
+        } satisfies UploadBannerImageAdminResponse)
+        return
+      }
+
+      const bucket = getStorage().bucket()
+      const file = bucket.file(storagePath)
+
+      await file.save(buffer, {
+        metadata: {
+          contentType,
+          metadata: {
+            firebaseStorageDownloadTokens: downloadToken,
+          },
+        },
+      })
+
+      response.status(200).json({
+        ok: true,
+        imageUrl: buildFirebaseDownloadUrl(bucket.name, storagePath, downloadToken),
+        storagePath,
+        reason: 'uploaded',
+      } satisfies UploadBannerImageAdminResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        imageUrl: null,
+        storagePath: null,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies UploadBannerImageAdminResponse)
+    }
+  },
+)
+
+export const getAdminAnalytics = onRequest(
+  {
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({
+        ok: false,
+        totalUsers: 0,
+        itemsSold: 0,
+        grossRevenueEur: 0,
+        referralCount: 0,
+        reason: 'invalid_method',
+      } satisfies AdminAnalyticsResponse)
+      return
+    }
+
+    const botToken = telegramBotToken.value()
+
+    if (!botToken) {
+      response.status(500).json({
+        ok: false,
+        totalUsers: 0,
+        itemsSold: 0,
+        grossRevenueEur: 0,
+        referralCount: 0,
+        reason: 'missing_bot_token',
+      } satisfies AdminAnalyticsResponse)
+      return
+    }
+
+    const body = request.body as Partial<AdminAnalyticsRequest> | undefined
+    const initData = typeof body?.initData === 'string' ? body.initData : ''
+    const verificationResult = verifyTelegramInitData(initData, botToken)
+
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+      response.status(401).json({
+        ok: false,
+        totalUsers: 0,
+        itemsSold: 0,
+        grossRevenueEur: 0,
+        referralCount: 0,
+        reason:
+          verificationResult.reason === 'expired_init_data'
+            ? 'expired_init_data'
+            : 'invalid_init_data',
+      } satisfies AdminAnalyticsResponse)
+      return
+    }
+
+    if (!readAdminIdsFromEnv().includes(verificationResult.user.id)) {
+      response.status(403).json({
+        ok: false,
+        totalUsers: 0,
+        itemsSold: 0,
+        grossRevenueEur: 0,
+        referralCount: 0,
+        reason: 'forbidden',
+      } satisfies AdminAnalyticsResponse)
+      return
+    }
+
+    try {
+      const db = getFirestore()
+
+      // Count all telegramSubscribers
+      const subscribersSnapshot = await db.collection('telegramSubscribers').count().get()
+      const totalUsers = subscribersSnapshot.data().count
+
+      // Aggregate order data — all orders
+      const ordersSnapshot = await db.collection('orders').get()
+      let itemsSold = 0
+      let grossRevenueEur = 0
+
+      for (const doc of ordersSnapshot.docs) {
+        const data = doc.data()
+
+        // Count items in each order
+        if (Array.isArray(data.items)) {
+          itemsSold += data.items.length
+        }
+
+        // Sum total for completed/paid/ready_for_meetup orders
+        const status = typeof data.status === 'string' ? data.status : ''
+        if (status === 'completed' || status === 'paid' || status === 'ready_for_meetup') {
+          const total = typeof data.total === 'number' ? data.total : 0
+          grossRevenueEur += total
+        }
+      }
+
+      // Count referrals (subscribers with a non-empty referredBy field)
+      const referredSnapshot = await db
+        .collection('telegramSubscribers')
+        .where('referredBy', '>=', '')
+        .count()
+        .get()
+      const referralCount = referredSnapshot.data().count
+
+      response.status(200).json({
+        ok: true,
+        totalUsers,
+        itemsSold,
+        grossRevenueEur: Math.round(grossRevenueEur * 100) / 100,
+        referralCount,
+        reason: 'listed',
+      } satisfies AdminAnalyticsResponse)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        totalUsers: 0,
+        itemsSold: 0,
+        grossRevenueEur: 0,
+        referralCount: 0,
+        reason: 'internal_error',
+        detail: error instanceof Error ? error.message : 'Unknown backend error.',
+      } satisfies AdminAnalyticsResponse)
+    }
+  },
+)

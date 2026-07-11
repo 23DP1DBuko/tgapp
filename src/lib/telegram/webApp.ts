@@ -34,6 +34,30 @@ const fallbackTheme: Required<TelegramThemeParams> = {
   secondary_bg_color: '#ebe4d8',
 }
 
+// Augment the global Telegram types to include the HapticFeedback API
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        ready(): void
+        initData?: string
+        initDataUnsafe?: {
+          user?: TelegramUser
+        }
+        colorScheme?: 'light' | 'dark'
+        themeParams?: TelegramThemeParams
+        HapticFeedback?: {
+          impactOccurred(
+            style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft',
+          ): void
+          notificationOccurred(type: 'error' | 'success' | 'warning'): void
+          selectionChanged(): void
+        }
+      }
+    }
+  }
+}
+
 export function getTelegramWebAppState(): TelegramWebAppState {
   const webApp = window.Telegram?.WebApp
 
@@ -47,5 +71,15 @@ export function getTelegramWebAppState(): TelegramWebAppState {
       ...fallbackTheme,
       ...webApp?.themeParams,
     },
+  }
+}
+
+export function triggerHapticFeedback(
+  style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' = 'light',
+) {
+  try {
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(style)
+  } catch {
+    // Haptics are a progressive enhancement — ignore in dev/unsupported env
   }
 }

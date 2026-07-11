@@ -1,116 +1,327 @@
-import { useEffect, useState } from 'react';
-import { listBroadcasts } from '../../lib/firebase/broadcasts';
-import type { Broadcast } from '../../types/broadcast';
+import { useEffect, useState } from 'react'
 
-export function BroadcastAdminPanel() {
-  const [items, setItems] = useState<Broadcast[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+import {
+  listBroadcasts,
+  sendBroadcast,
+  deleteBroadcast,
+} from '../../lib/firebase/broadcasts'
+import { triggerHapticFeedback } from '../../lib/telegram/webApp'
+import type { Broadcast } from '../../types/broadcast'
 
-  async function load() {
+type BroadcastAdminPanelProps = {
+  initData: string
+}
+
+type ViewMode = 'compose' | 'history'
+
+export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('compose')
+  const [composeText, setComposeText] = useState('')
+  const [items, setItems] = useState<Broadcast[]>([])
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<{
+    tone: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+
+  async function loadHistory() {
     try {
-      setLoading(true);
-      setError(null);
-      const data = await listBroadcasts(20);
-      setItems(data);
+      setLoading(true)
+      setError(null)
+      const data = await listBroadcasts(20)
+      setItems(data)
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Failed to load broadcasts.'
-      );
+        err instanceof Error ? err.message : 'Failed to load broadcasts.',
+      )
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
   useEffect(() => {
-    void load();
-  }, []);
+    if (viewMode === 'history') {
+      void loadHistory()
+    }
+  }, [viewMode])
+
+  async function handleSend() {
+    const trimmed = composeText.trim()
+    if (!trimmed) {
+      setFeedback({ tone: 'error', message: 'Broadcast text cannot be empty.' })
+      return
+    }
+
+    setSending(true)
+    setFeedback(null)
+    setError(null)
+
+    try {
+      await sendBroadcast(initData, trimmed)
+      triggerHapticFeedback('medium')
+      setFeedback({
+        tone: 'success',
+        message: 'Broadcast sent to all subscribers.',
+      })
+      setComposeText('')
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to send broadcast.',
+      })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function handleDelete(broadcastId: string) {
+    setDeleteConfirmId(null)
+    triggerHapticFeedback('light')
+
+    try {
+      await deleteBroadcast(initData, broadcastId)
+      setItems((current) => current.filter((item) => item.id !== broadcastId))
+      setFeedback({
+        tone: 'success',
+        message: 'Broadcast deleted.',
+      })
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to delete broadcast.',
+      })
+    }
+  }
+
+  function formatTimestamp(createdAt: string | null): string {
+    if (!createdAt) return 'Unknown'
+    try {
+      return new Date(createdAt).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+    } catch {
+      return 'Unknown'
+    }
+  }
+
+  const charCount = composeText.trim().length
+  const canSend = charCount > 0 && !sending
 
   return (
-    <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Broadcast History
-          </p>
-          <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            See the last broadcasts sent to Telegram subscribers and how many chats received them.
-          </p>
-        </div>
+    <article className="overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.94),rgba(18,10,22,0.96))] shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
+      {/* ── View Toggle ── */}
+      <div className="flex border-b border-white/10">
         <button
           type="button"
-          onClick={load}
-          className="rounded-full border border-white/14 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+          onClick={() => {
+            setViewMode('compose')
+            setFeedback(null)
+            setError(null)
+          }}
+          className={`flex-1 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] transition-colors ${
+            viewMode === 'compose'
+              ? 'bg-white/6 text-[var(--shop-cream)]'
+              : 'text-[var(--shop-muted)]'
+          }`}
         >
-          Refresh
+          Compose New
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setViewMode('history')
+            setFeedback(null)
+            setError(null)
+          }}
+          className={`flex-1 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] transition-colors ${
+            viewMode === 'history'
+              ? 'bg-white/6 text-[var(--shop-cream)]'
+              : 'text-[var(--shop-muted)]'
+          }`}
+        >
+          History Log
         </button>
       </div>
 
-      {loading && (
-        <p className="mt-4 text-sm text-[var(--shop-muted)]">
-          Loading broadcasts...
-        </p>
-      )}
-
-      {error && (
-        <p className="mt-4 rounded-2xl bg-[var(--shop-red)]/18 px-4 py-3 text-sm text-[var(--shop-cream)]">
-          {error}
-        </p>
-      )}
-
-      {!loading && !error && items.length === 0 && (
-        <p className="mt-4 text-sm text-[var(--shop-muted)]">
-          No broadcasts have been logged yet.
-        </p>
-      )}
-
-      {!loading && !error && items.length > 0 && (
-        <div className="mt-4 max-h-96 space-y-3 overflow-y-auto pr-1">
-          {items.map((b) => (
-            <section
-              key={b.id}
-              className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    {b.createdAt
-                      ? new Date(b.createdAt).toLocaleString()
-                      : 'Unknown time'}
-                  </p>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-[var(--shop-cream)]">
-                    {b.text}
-                  </p>
-                </div>
-                <div className="text-right text-xs text-[var(--shop-muted)]">
-                  <p>
-                    Sent:{' '}
-                    <span className="font-semibold text-[var(--shop-cream)]">
-                      {b.sentCount}
-                    </span>
-                  </p>
-                  <p>
-                    Failed:{' '}
-                    <span className="font-semibold text-[var(--shop-cream)]">
-                      {b.failedCount}
-                    </span>
-                  </p>
-                  <p className="mt-1">
-                    Reason:{' '}
-                    <span className="font-medium">{b.reason || '—'}</span>
-                  </p>
-                  <p className="mt-1">
-                    Admin:{' '}
-                    <span className="font-medium">
-                      {b.createdBy ?? '—'}
-                    </span>
-                  </p>
-                </div>
-              </div>
-            </section>
-          ))}
+      {/* ── Feedback Banner ── */}
+      {feedback ? (
+        <div
+          className={`mx-5 mt-4 rounded-2xl px-4 py-3 text-sm ${
+            feedback.tone === 'success'
+              ? 'bg-emerald-300/18 text-emerald-100'
+              : 'bg-[var(--shop-red)]/18 text-[var(--shop-cream)]'
+          }`}
+        >
+          {feedback.message}
         </div>
-      )}
+      ) : null}
+
+      {/* ── Compose View ── */}
+      {viewMode === 'compose' ? (
+        <div className="p-5">
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.22em] text-stone-500">
+              Broadcast Message
+            </span>
+            <textarea
+              value={composeText}
+              onChange={(event) => setComposeText(event.target.value)}
+              placeholder="Write your broadcast message to all Telegram subscribers..."
+              className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm leading-6 text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-purple)]"
+              maxLength={2000}
+            />
+          </label>
+
+          <p className="mt-2 text-right text-[11px] text-[var(--shop-muted)]/60">
+            {charCount} / 2000
+          </p>
+
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!canSend}
+            className="mt-4 w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          >
+            {sending ? 'SENDING...' : 'SEND TO ALL SUBSCRIBERS'}
+          </button>
+        </div>
+      ) : null}
+
+      {/* ── History Log View ── */}
+      {viewMode === 'history' ? (
+        <div className="p-5">
+          {error ? (
+            <div className="rounded-2xl bg-[var(--shop-red)]/18 px-4 py-3 text-sm text-[var(--shop-cream)]">
+              {error}
+            </div>
+          ) : null}
+
+          {loading ? (
+            <div className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
+              Loading broadcast history...
+            </div>
+          ) : null}
+
+          {!loading && !error && items.length === 0 ? (
+            <div className="rounded-2xl bg-white/8 px-4 py-8 text-center text-sm text-[var(--shop-muted)]">
+              No broadcasts sent yet.
+            </div>
+          ) : null}
+
+          {!loading && !error && items.length > 0 ? (
+            <div className="space-y-3">
+              {items.map((broadcast) => {
+                const truncatedText =
+                  broadcast.text.length > 100
+                    ? `${broadcast.text.slice(0, 100)}...`
+                    : broadcast.text
+
+                return (
+                  <div
+                    key={broadcast.id}
+                    className="rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3"
+                  >
+                    {/* Header row: timestamp + delete */}
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]/70">
+                        {formatTimestamp(broadcast.createdAt)}
+                      </p>
+                      {deleteConfirmId === broadcast.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(broadcast.id)}
+                            className="rounded-full bg-[var(--shop-red)]/18 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmId(null)}
+                            className="rounded-full bg-white/8 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerHapticFeedback('light')
+                            setDeleteConfirmId(broadcast.id)
+                          }}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/8 text-[var(--shop-muted)] transition-colors hover:bg-[var(--shop-red)]/18 hover:text-[var(--shop-red)]"
+                          aria-label="Delete broadcast"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            className="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M2 4h12" />
+                            <path d="M5 4V2.5a.5.5 0 01.5-.5h5a.5.5 0 01.5.5V4" />
+                            <path d="M13 4v9.5a1 1 0 01-1 1H4a1 1 0 01-1-1V4" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Admin ID tag */}
+                    <div className="mt-2">
+                      <span className="inline-block rounded-full border border-white/10 bg-white/6 px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                        Admin ID: {broadcast.createdBy ?? '—'}
+                      </span>
+                    </div>
+
+                    {/* Content preview */}
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--shop-cream)]">
+                      {truncatedText}
+                    </p>
+
+                    {/* Delivery metrics */}
+                    <div className="mt-3 flex items-center gap-3">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
+                        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden="true">
+                          <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 3.5a.75.75 0 011.5 0V8a.75.75 0 01-1.5 0V4.5zM8 10.5a.75.75 0 100 1.5.75.75 0 000-1.5z" />
+                        </svg>
+                        {broadcast.sentCount} Sent
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <circle cx="8" cy="8" r="6" />
+                          <path d="M8 5v3.5" />
+                          <path d="M8 11.5v.01" />
+                        </svg>
+                        {broadcast.failedCount} Failed
+                      </span>
+                    </div>
+
+                    {/* Failure reason alert */}
+                    {broadcast.failedCount > 0 && broadcast.reason ? (
+                      <div className="mt-2 rounded-xl bg-[var(--shop-red)]/14 px-3 py-2 text-[10px] font-medium leading-5 text-[var(--shop-red)]/90">
+                        Reason: {broadcast.reason}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
-  );
+  )
 }

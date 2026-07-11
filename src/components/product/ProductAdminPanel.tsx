@@ -400,46 +400,56 @@ export function ProductAdminPanel({
 
   return (
     <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(35,16,37,0.94),rgba(22,10,24,0.96))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Product Admin
-          </p>
-          <p className="mt-3 text-sm leading-6 text-[var(--shop-muted)]">
-            Create, edit, and clean up products directly from the app with backend-verified admin access.
-          </p>
+      {/* ── Header: title + destructive actions ── */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+          Product Admin
+        </p>
+        <div className="flex items-center gap-2">
+          {soldProducts.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleDeleteSoldProducts}
+              disabled={isSubmitting}
+              className="rounded-full border border-[var(--shop-red)]/30 bg-[var(--shop-red)]/12 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:opacity-50"
+            >
+              Clear Sold ({soldProducts.length})
+            </button>
+          ) : null}
+          <span className="rounded-full bg-[var(--shop-red)]/22 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
+            Live
+          </span>
         </div>
-        <span className="rounded-full bg-[var(--shop-red)]/22 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-cream)]">
-          Live
-        </span>
       </div>
 
-      <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
-        <div className="flex flex-wrap gap-2">
-          {(['all', 'available', 'sold'] as const).map((view) => (
-            <button
-              key={view}
-              type="button"
-              onClick={() => setProductView(view)}
-              className={`rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${
-                productView === view
-                  ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                  : 'bg-white/8 text-[var(--shop-muted)]'
-              }`}
-            >
-              {view}
-            </button>
-          ))}
-        </div>
+      {/* ── View filter pills ── */}
+      <div className="mt-4 flex gap-2">
+        {(['all', 'available', 'sold'] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            onClick={() => setProductView(view)}
+            className={`rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+              productView === view
+                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                : 'bg-white/8 text-[var(--shop-muted)]'
+            }`}
+          >
+            {view}
+          </button>
+        ))}
+      </div>
+
+      <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Mode
           </span>
           <select
             value={selectedProductId}
             onChange={(event) => handleProductSelection(event.target.value)}
-            className={inputClassName}
+            className={darkSelectClassName}
           >
             <option value="new">Create new product</option>
             {filteredProducts.map((product) => (
@@ -451,7 +461,7 @@ export function ProductAdminPanel({
         </label>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Product Name
           </span>
           <input
@@ -465,22 +475,24 @@ export function ProductAdminPanel({
         </label>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Description
           </span>
           <textarea
             value={form.description}
-            onChange={(event) =>
+            onChange={(event) => {
               setForm((current) => ({ ...current, description: event.target.value }))
-            }
-            className={`${inputClassName} min-h-24 resize-y`}
+              event.target.style.height = 'auto'
+              event.target.style.height = `${event.target.scrollHeight}px`
+            }}
+            className={`${inputClassName} min-h-24 resize-none overflow-hidden`}
             placeholder="Oversized hoodie for the first drop."
           />
         </label>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Category
             </span>
             <select
@@ -491,7 +503,7 @@ export function ProductAdminPanel({
                   category: event.target.value as ProductCategory,
                 }))
               }
-              className={inputClassName}
+              className={darkSelectClassName}
             >
               {PRODUCT_CATEGORIES.map((category) => (
                 <option key={category} value={category}>
@@ -502,7 +514,7 @@ export function ProductAdminPanel({
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Price EUR
             </span>
             <input
@@ -518,7 +530,7 @@ export function ProductAdminPanel({
         </div>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Brands
           </span>
           <input
@@ -532,24 +544,30 @@ export function ProductAdminPanel({
         </label>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Product Images
           </span>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(event) => handlePendingFileSelection(event.target.files)}
-            className={fileInputClassName}
-          />
-          <p className="mt-2 text-xs leading-5 text-[var(--shop-muted)]">
-            Images are uploaded to Firebase Storage and their download URLs are saved into the product document automatically.
-          </p>
-          {galleryItems.length > 0 ? (
-            <p className="mt-2 text-xs text-[var(--shop-muted)]">
-              Gallery items ready: {galleryItems.length}. Press, move, and release the photo cards to lock in the right order before saving.
-            </p>
-          ) : null}
+
+          {/* Dashed dropzone */}
+          <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-white/14 bg-white/6 px-4 py-6 transition-colors hover:border-white/25">
+            <svg viewBox="0 0 20 20" fill="currentColor" className="mb-2 h-6 w-6 text-[var(--shop-muted)]" aria-hidden="true">
+              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636V13.25z" />
+              <path fillRule="evenodd" d="M3.5 12.75a.75.75 0 01.75.75v2.25a1 1 0 001 1h9.5a1 1 0 001-1V13.5a.75.75 0 011.5 0v2.25a2.5 2.5 0 01-2.5 2.5h-9.5a2.5 2.5 0 01-2.5-2.5V13.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
+            </svg>
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+              Add Images
+            </span>
+            <span className="mt-1 text-[10px] text-[var(--shop-muted)]/60">
+              Tap to browse or drag here
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(event) => handlePendingFileSelection(event.target.files)}
+              className="hidden"
+            />
+          </label>
         </label>
 
         {galleryItems.length > 0 ? (
@@ -577,7 +595,7 @@ export function ProductAdminPanel({
         ) : null}
 
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Limited Label
           </span>
           <input
@@ -590,16 +608,25 @@ export function ProductAdminPanel({
           />
         </label>
 
-        <label className="flex items-center gap-3 rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)]">
-          <input
-            type="checkbox"
-            checked={form.isAvailable}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, isAvailable: event.target.checked }))
+        <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
+          <span className="text-sm text-[var(--shop-cream)]">Product is available</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.isAvailable}
+            onClick={() =>
+              setForm((current) => ({ ...current, isAvailable: !current.isAvailable }))
             }
-            className="h-4 w-4 accent-zinc-900"
-          />
-          Product is available
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+              form.isAvailable ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
+            }`}
+          >
+            <span
+              className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
+                form.isAvailable ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
         </label>
 
         {feedbackMessage ? (
@@ -617,13 +644,17 @@ export function ProductAdminPanel({
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+          className={`w-full rounded-2xl px-4 py-3 text-sm font-bold uppercase tracking-[0.2em] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+            selectedProduct
+              ? 'border-2 border-[var(--shop-purple)] bg-[var(--shop-purple)]/12 text-[var(--shop-purple)]'
+              : 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)]'
+          }`}
         >
           {isSubmitting
-            ? 'Saving Product...'
+            ? 'Saving...'
             : selectedProduct
-              ? 'Save Product Changes'
-              : 'Create Product'}
+              ? 'SAVE CHANGES'
+              : 'CREATE PRODUCT'}
         </button>
 
         {selectedProduct ? (
@@ -636,15 +667,6 @@ export function ProductAdminPanel({
             Delete Product
           </button>
         ) : null}
-
-        <button
-          type="button"
-          onClick={handleDeleteSoldProducts}
-          disabled={isSubmitting || soldProducts.length === 0}
-          className="w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm font-semibold text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Delete All Sold Items ({soldProducts.length})
-        </button>
       </form>
     </article>
   )
@@ -653,8 +675,8 @@ export function ProductAdminPanel({
 const inputClassName =
   'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
 
-const fileInputClassName =
-  'w-full rounded-2xl border border-dashed border-white/14 bg-white/6 px-4 py-3 text-sm text-[var(--shop-muted)] file:mr-3 file:rounded-full file:border-0 file:bg-[var(--shop-purple)] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white'
+const darkSelectClassName =
+  'w-full rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition focus:border-[var(--shop-red)]'
 
 type PendingImageCardProps = {
   item: GalleryItem
@@ -725,6 +747,7 @@ function GalleryImageCard({
         <img
           src={imageSrc}
           alt={imageLabel}
+          loading="lazy"
           className="h-full w-full object-cover"
         />
       </div>

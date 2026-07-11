@@ -1,0 +1,155 @@
+import {
+  collection,
+  getDocs,
+  limit as fsLimit,
+  orderBy,
+  query,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore'
+
+import { getFirestoreDb } from './firestore'
+import type { Task, TaskInput } from '../../types/rewards'
+
+type TaskDocument = TaskInput & {
+  createdAt?: string
+  updatedAt?: string
+}
+
+const COLLECTION = 'tasks'
+const DEFAULT_UPSERT_TASK_URL = '/api/admin/upsertTask'
+const DEFAULT_DELETE_TASKS_URL = '/api/admin/deleteTasks'
+
+type UpsertTaskResponse = {
+  ok: boolean
+  taskId: string | null
+  reason?: string
+  detail?: string
+}
+
+type DeleteTasksResponse = {
+  ok: boolean
+  taskId: string | null
+  reason?: string
+  detail?: string
+}
+
+function toTask(
+  docSnapshot: QueryDocumentSnapshot<TaskDocument>,
+): Task {
+  const data = docSnapshot.data()
+
+  return {
+    id: docSnapshot.id,
+    title: data.title ?? '',
+    rewardType: data.rewardType === 'ticket' ? 'ticket' : 'coupon',
+    rewardValue: data.rewardValue ?? '',
+    status: data.status === 'inactive' ? 'inactive' : 'active',
+    sortOrder: data.sortOrder ?? 0,
+    createdAt: typeof data.createdAt === 'string' ? data.createdAt : null,
+    updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null,
+  }
+}
+
+export async function listTasks(limitCount = 20): Promise<Task[]> {
+  const db = getFirestoreDb()
+  if (!db) return []
+
+  const q = query(
+    collection(db, COLLECTION),
+    orderBy('sortOrder', 'asc'),
+    fsLimit(limitCount),
+  )
+
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map((doc) => toTask(doc as QueryDocumentSnapshot<TaskDocument>))
+}
+
+export async function createTask(
+  initData: string,
+  input: TaskInput,
+): Promise<string> {
+  const response = await fetch(
+    import.meta.env.VITE_UPSERT_TASK_URL || DEFAULT_UPSERT_TASK_URL,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData, task: input }),
+    },
+  )
+
+  if (!response.ok) {
+    let detail = `http_${response.status}`
+    try {
+      const result = (await response.json()) as UpsertTaskResponse
+      detail = result.detail || result.reason || detail
+    } catch { /* fallback */ }
+    throw new Error(`Failed to create task: ${detail}.`)
+  }
+
+  const result = (await response.json()) as UpsertTaskResponse
+
+  if (!result.ok || !result.taskId) {
+    throw new Error(`Failed to create task: ${result.reason || 'unknown error'}.`)
+  }
+
+  return result.taskId
+}
+
+export async function updateTask(
+  initData: string,
+  taskId: string,
+  input: Partial<TaskInput>,
+): Promise<void> {
+  const response = await fetch(
+    import.meta.env.VITE_UPSERT_TASK_URL || DEFAULT_UPSERT_TASK_URL,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData, taskId, task: input }),
+    },
+  )
+
+  if (!response.ok) {
+    let detail = `http_${response.status}`
+    try {
+      const result = (await response.json()) as UpsertTaskResponse
+      detail = result.detail || result.reason || detail
+    } catch { /* fallback */ }
+    throw new Error(`Failed to update task: ${detail}.`)
+  }
+
+  const result = (await response.json()) as UpsertTaskResponse
+
+  if (!result.ok) {
+    throw new Error(`Failed to update task: ${result.reason || 'unknown error'}.`)
+  }
+}
+
+export async function deleteTask(
+  initData: string,
+  taskId: string,
+): Promise<void> {
+  const response = await fetch(
+    import.meta.env.VITE_DELETE_TASKS_URL || DEFAULT_DELETE_TASKS_URL,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData, taskIds: [taskId] }),
+    },
+  )
+
+  if (!response.ok) {
+    let detail = `http_${response.status}`
+    try {
+      const result = (await response.json()) as DeleteTasksResponse
+      detail = result.detail || result.reason || detail
+    } catch { /* fallback */ }
+    throw new Error(`Failed to delete task: ${detail}.`)
+  }
+
+  const result = (await response.json()) as DeleteTasksResponse
+
+  if (!result.ok) {
+    throw new Error(`Failed to delete task: ${result.reason || 'unknown error'}.`)
+  }
+}
