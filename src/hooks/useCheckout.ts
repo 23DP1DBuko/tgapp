@@ -157,6 +157,11 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
       return
     }
 
+    if (cartItems.length === 0) {
+      // Button is already disabled when cart is empty; this is a safety net
+      return
+    }
+
     setCheckoutSubmitted(false)
     setCheckoutSubmitState('idle')
     setCheckoutError(null)
@@ -217,6 +222,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
         checkoutForm.paymentMethod === 'usdt' ? 'waiting_for_payment' : 'new'
 
       const orderId = await createOrder({
+        initData: options.initData,
         fullName: trimmedName,
         telegramHandle: normalizedTelegramHandle,
         telegramUserId: user?.id,

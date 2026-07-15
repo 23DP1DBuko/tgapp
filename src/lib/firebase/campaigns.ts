@@ -27,6 +27,7 @@ function toCampaign(
     headingPart1: data.headingPart1 ?? '',
     headingPart2: data.headingPart2 ?? '',
     subtitle: data.subtitle ?? '',
+    imageUrl: data.imageUrl ?? '',
     isActive: data.isActive ?? true,
     sortOrder: data.sortOrder ?? 0,
     createdAt: typeof data.createdAt === 'string' ? data.createdAt : null,

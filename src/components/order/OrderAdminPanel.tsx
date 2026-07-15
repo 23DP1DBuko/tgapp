@@ -462,8 +462,10 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                           onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 rounded-md bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-[#A855F7] transition-colors hover:bg-[#A855F7]/15"
                         >
-                          <svg viewBox="0 0 20 20" className="h-3 w-3" fill="currentColor" aria-hidden="true">
-                            <path d="M10 1C5.06 1 1 5.06 1 10s4.06 9 9 9 9-4.06 9-9-4.06-9-9-9zm4.24 6.16l-1.44 6.78c-.1.48-.4.6-.8.37l-2.23-1.64-1.07 1.04c-.12.12-.22.22-.44.22l.15-2.23 4.07-3.68c.18-.16-.04-.25-.28-.09l-5.03 3.17-2.17-.7c-.47-.15-.48-.47.1-.7l8.5-3.27c.39-.14.73.08.6.66z" />
+                          <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="currentColor" aria-hidden="true">
+                            <g transform="translate(2, 2)">
+                              <path d="M10 1C5.06 1 1 5.06 1 10s4.06 9 9 9 9-4.06 9-9-4.06-9-9-9zm4.24 6.16l-1.44 6.78c-.1.48-.4.6-.8.37l-2.23-1.64-1.07 1.04c-.12.12-.22.22-.44.22l.15-2.23 4.07-3.68c.18-.16-.04-.25-.28-.09l-5.03 3.17-2.17-.7c-.47-.15-.48-.47.1-.7l8.5-3.27c.39-.14.73.08.6.66z" />
+                            </g>
                           </svg>
                           @{card.buyerHandle.replace(/^@/, '')}
                         </a>
@@ -626,8 +628,10 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                         </button>
                       ) : null}
 
-                      {/* Mark Completed — unless already completed/cancelled */}
-                      {card.raw.status !== 'completed' && card.raw.status !== 'cancelled' ? (
+                      {/* Mark Completed — from valid predecessor states */}
+                      {card.raw.status === 'new' ||
+                      card.raw.status === 'paid' ||
+                      card.raw.status === 'ready_for_meetup' ? (
                         <button
                           type="button"
                           onClick={() => void handleUpdateStatus(card.raw, 'completed')}
@@ -638,8 +642,9 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                         </button>
                       ) : null}
 
-                      {/* Cancel Order — unless already cancelled/completed */}
-                      {card.raw.status !== 'cancelled' && card.raw.status !== 'completed' ? (
+                      {/* Cancel Order — from any non-terminal state */}
+                      {card.raw.status !== 'cancelled' &&
+                      card.raw.status !== 'completed' ? (
                         <button
                           type="button"
                           onClick={() => void handleUpdateStatus(card.raw, 'cancelled')}

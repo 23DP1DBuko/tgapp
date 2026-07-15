@@ -20,10 +20,26 @@ body {
     linear-gradient(180deg, #190916 0%, #0d050c 100%);
   color: var(--shop-text);
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body input,
+body textarea {
+  user-select: auto;
+  -webkit-touch-callout: auto;
 }
 
 #root {
   min-height: 100vh;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#root input,
+#root textarea {
+  user-select: auto;
+  -webkit-touch-callout: auto;
 }
 
 .scrollbar-none {
@@ -44,5 +60,89 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+.shake {
+  animation: shake 0.5s ease-in-out;
+}
+
+
+@keyframes fly-to-cart {
+  0% {
+    opacity: 1;
+    transform: scale(1) translate(0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.15) translate(var(--fly-dx, 0px), var(--fly-dy, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Kill the toggle-switch translate animation while keeping its final state */
+  .translate-x-4,
+  .translate-x-full,
+  .-translate-x-full {
+    transition: none !important;
+  }
+
+  /* Prevent the bounce/ping animation from showing at all */
+  .animate-bounce,
+  .animate-ping,
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  /* Keep skeletons visible but static (no shimmer) */
+  [class*="shimmer"] {
+    background-image: none !important;
+    background-color: rgba(255, 255, 255, 0.04) !important;
+  }
+
+  /* Disable hover scale transforms — redundant with transition override above, kept for safety */
 }
 

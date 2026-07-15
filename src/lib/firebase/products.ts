@@ -16,6 +16,7 @@ import {
   type Product,
   type ProductCategory,
 } from '../../types/product'
+import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
 
 const DEFAULT_ADMIN_UPSERT_PRODUCT_URL = '/api/admin/upsertProduct'
 const DEFAULT_ADMIN_DELETE_PRODUCTS_URL = '/api/admin/deleteProducts'
@@ -34,6 +35,9 @@ export type CreateProductInput = {
   isAvailable: boolean
   images: string[]
   isLimitedLabel?: string
+  upcoming?: boolean
+  earlyAccessAt?: string | null
+  publicAt?: string | null
 }
 
 function toProductAdminPayload(input: CreateProductInput) {
@@ -46,6 +50,9 @@ function toProductAdminPayload(input: CreateProductInput) {
     isAvailable: input.isAvailable,
     images: input.images,
     isLimitedLabel: input.isLimitedLabel,
+    upcoming: input.upcoming ?? false,
+    earlyAccessAt: input.earlyAccessAt ?? null,
+    publicAt: input.publicAt ?? null,
   }
 }
 
@@ -85,6 +92,9 @@ function toProduct(snapshot: QueryDocumentSnapshot<ProductDocument>): Product {
     images: Array.isArray(data.images) ? data.images : [],
     createdAt: data.createdAt ?? null,
     isLimitedLabel: data.isLimitedLabel,
+    upcoming: data.upcoming,
+    earlyAccessAt: data.earlyAccessAt ?? null,
+    publicAt: data.publicAt ?? null,
   }
 }
 
@@ -100,6 +110,33 @@ function getProductsQuery() {
   }
 
   return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(12))
+}
+
+function getAllProductsQuery() {
+  const db = getFirestoreDb()
+
+  if (!db) {
+    return null
+  }
+
+  return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(50))
+}
+
+/**
+ * Fetch up to 50 active (available) products for use in product pickers/modals.
+ */
+export async function listAllProducts(): Promise<Product[]> {
+  const productsQuery = getAllProductsQuery()
+
+  if (!productsQuery) {
+    return []
+  }
+
+  const snapshot = await getDocs(productsQuery)
+
+  return toProducts(snapshot as QuerySnapshot<ProductDocument>).filter(
+    (product) => product.isAvailable,
+  )
 }
 
 export async function listProducts(): Promise<Product[]> {
@@ -137,24 +174,30 @@ export function subscribeToProducts(
   )
 }
 
+/**
+ * Upsert a product (create or update) with timeout + transient retry.
+ * Throws a descriptive error on failure.
+ */
 export async function createProduct(initData: string, input: CreateProductInput): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_UPSERT_PRODUCT_URL || DEFAULT_ADMIN_UPSERT_PRODUCT_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_UPSERT_PRODUCT_URL || DEFAULT_ADMIN_UPSERT_PRODUCT_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          product: toProductAdminPayload(input),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        product: toProductAdminPayload(input),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to save product: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function updateProduct(
@@ -162,92 +205,171 @@ export async function updateProduct(
   productId: string,
   input: CreateProductInput,
 ): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_UPSERT_PRODUCT_URL || DEFAULT_ADMIN_UPSERT_PRODUCT_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_UPSERT_PRODUCT_URL || DEFAULT_ADMIN_UPSERT_PRODUCT_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productId,
+          product: toProductAdminPayload(input),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        productId,
-        product: toProductAdminPayload(input),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to save product: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function updateProductLikesCount(
+  initData: string,
   productId: string,
   delta: 1 | -1,
 ): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_UPDATE_PRODUCT_SIGNAL_URL || DEFAULT_UPDATE_PRODUCT_SIGNAL_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetch(
+      import.meta.env.VITE_UPDATE_PRODUCT_SIGNAL_URL || DEFAULT_UPDATE_PRODUCT_SIGNAL_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productId,
+          signal: 'likesCount',
+          delta,
+        }),
       },
-      body: JSON.stringify({
-        productId,
-        signal: 'likesCount',
-        delta,
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to update likes: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`Failed to update likes: ${await readErrorReason(response)}.`)
+    }
+  }, { maxRetries: 2, shouldRetry: isTransientError })
 }
 
 export async function updateProductCartCount(
+  initData: string,
   productId: string,
   delta: 1 | -1,
 ): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_UPDATE_PRODUCT_SIGNAL_URL || DEFAULT_UPDATE_PRODUCT_SIGNAL_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetch(
+      import.meta.env.VITE_UPDATE_PRODUCT_SIGNAL_URL || DEFAULT_UPDATE_PRODUCT_SIGNAL_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productId,
+          signal: 'cartCount',
+          delta,
+        }),
       },
-      body: JSON.stringify({
-        productId,
-        signal: 'cartCount',
-        delta,
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to update cart count: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`Failed to update cart count: ${await readErrorReason(response)}.`)
+    }
+  }, { maxRetries: 2, shouldRetry: isTransientError })
 }
 
 export async function deleteProduct(initData: string, productId: string): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_DELETE_PRODUCTS_URL || DEFAULT_ADMIN_DELETE_PRODUCTS_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_DELETE_PRODUCTS_URL || DEFAULT_ADMIN_DELETE_PRODUCTS_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productIds: [productId],
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        productIds: [productId],
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to delete product: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })}
+
+
+
+// ── Reservation API ──
+
+const DEFAULT_PRODUCT_RESERVE_URL = '/api/products/reserve'
+const DEFAULT_PRODUCT_RELEASE_RESERVATION_URL = '/api/products/releaseReservation'
+
+type ReserveProductResponse = {
+  ok?: boolean
+  reservedUntil?: string | null
+  reason?: string
+  detail?: string
+}
+
+export async function reserveProduct(
+  initData: string,
+  productId: string,
+): Promise<{ reserved: boolean; reservedUntil: string | null; reason: string }> {
+  return withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_PRODUCT_RESERVE_URL || DEFAULT_PRODUCT_RESERVE_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, productId }),
+      },
+    )
+
+    if (!response.ok) {
+      const result = (await response.json().catch(() => ({}))) as Partial<ReserveProductResponse>
+      return {
+        reserved: false,
+        reservedUntil: null,
+        reason: result.reason ?? `http_${response.status}`,
+      }
+    }
+
+    const result = (await response.json()) as ReserveProductResponse
+
+    return {
+      reserved: result.ok === true,
+      reservedUntil: result.reservedUntil ?? null,
+      reason: result.reason ?? 'reserved',
+    }
+  }, { maxRetries: 2, shouldRetry: isTransientError })
+}
+
+export async function releaseProductReservation(
+  initData: string,
+  productId: string,
+): Promise<void> {
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_PRODUCT_RELEASE_RESERVATION_URL || DEFAULT_PRODUCT_RELEASE_RESERVATION_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, productId }),
+      },
+    )
+
+    if (!response.ok) {
+      const reason = await readErrorReason(response)
+      throw new Error(`Failed to release reservation: ${reason}.`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function deleteSoldProducts(initData: string, products: Product[]): Promise<void> {
@@ -257,21 +379,24 @@ export async function deleteSoldProducts(initData: string, products: Product[]):
     return
   }
 
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_DELETE_PRODUCTS_URL || DEFAULT_ADMIN_DELETE_PRODUCTS_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_DELETE_PRODUCTS_URL || DEFAULT_ADMIN_DELETE_PRODUCTS_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productIds: soldProducts.map((product) => product.id),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        productIds: soldProducts.map((product) => product.id),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to delete sold products: ${await readErrorReason(response)}.`)
-  }
-}
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })}
+
+

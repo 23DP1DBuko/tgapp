@@ -11,6 +11,7 @@ import {
 
 import { getFirestoreDb } from './firestore'
 import type { Broadcast } from '../../types/broadcast'
+import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
 
 const DEFAULT_SEND_BROADCAST_URL = '/api/admin/sendBroadcast'
 const DEFAULT_DELETE_BROADCAST_URL = '/api/admin/deleteBroadcast'
@@ -90,78 +91,82 @@ export async function sendBroadcast(
   sentCount: number
   failedCount: number
 }> {
-  const response = await fetch(
-    import.meta.env.VITE_SEND_BROADCAST_URL || DEFAULT_SEND_BROADCAST_URL,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, text }),
-    },
-  )
-
-  if (!response.ok) {
-    let detail = `http_${response.status}`
-    try {
-      const result = (await response.json()) as SendBroadcastResponse
-      if (typeof result.detail === 'string' && result.detail) {
-        detail = result.detail
-      } else if (typeof result.reason === 'string') {
-        detail = result.reason
-      }
-    } catch {
-      // Keep HTTP fallback.
-    }
-    throw new Error(`Failed to send broadcast: ${detail}.`)
-  }
-
-  const result = (await response.json()) as SendBroadcastResponse
-
-  if (!result.ok || !result.broadcastId) {
-    throw new Error(
-      `Failed to send broadcast: ${result.reason || 'unknown error'}.`,
+  return withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_SEND_BROADCAST_URL || DEFAULT_SEND_BROADCAST_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, text }),
+      },
     )
-  }
 
-  return {
-    broadcastId: result.broadcastId,
-    sentCount: result.sentCount ?? 0,
-    failedCount: result.failedCount ?? 0,
-  }
+    if (!response.ok) {
+      let detail = `http_${response.status}`
+      try {
+        const result = (await response.json()) as SendBroadcastResponse
+        if (typeof result.detail === 'string' && result.detail) {
+          detail = result.detail
+        } else if (typeof result.reason === 'string') {
+          detail = result.reason
+        }
+      } catch {
+        // Keep HTTP fallback.
+      }
+      throw new Error(`${detail}`)
+    }
+
+    const result = (await response.json()) as SendBroadcastResponse
+
+    if (!result.ok || !result.broadcastId) {
+      throw new Error(
+        `${result.reason || 'unknown_error'}`,
+      )
+    }
+
+    return {
+      broadcastId: result.broadcastId,
+      sentCount: result.sentCount ?? 0,
+      failedCount: result.failedCount ?? 0,
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function deleteBroadcast(
   initData: string,
   broadcastId: string,
 ): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_DELETE_BROADCAST_URL || DEFAULT_DELETE_BROADCAST_URL,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, broadcastId }),
-    },
-  )
-
-  if (!response.ok) {
-    let detail = `http_${response.status}`
-    try {
-      const result = (await response.json()) as DeleteBroadcastResponse
-      if (typeof result.detail === 'string' && result.detail) {
-        detail = result.detail
-      } else if (typeof result.reason === 'string') {
-        detail = result.reason
-      }
-    } catch {
-      // Keep HTTP fallback.
-    }
-    throw new Error(`Failed to delete broadcast: ${detail}.`)
-  }
-
-  const result = (await response.json()) as DeleteBroadcastResponse
-
-  if (!result.ok) {
-    throw new Error(
-      `Failed to delete broadcast: ${result.reason || 'unknown error'}.`,
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_DELETE_BROADCAST_URL || DEFAULT_DELETE_BROADCAST_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, broadcastId }),
+      },
     )
-  }
+
+    if (!response.ok) {
+      let detail = `http_${response.status}`
+      try {
+        const result = (await response.json()) as DeleteBroadcastResponse
+        if (typeof result.detail === 'string' && result.detail) {
+          detail = result.detail
+        } else if (typeof result.reason === 'string') {
+          detail = result.reason
+        }
+      } catch {
+        // Keep HTTP fallback.
+      }
+      throw new Error(`${detail}`)
+    }
+
+    const result = (await response.json()) as DeleteBroadcastResponse
+
+    if (!result.ok) {
+      throw new Error(
+        `${result.reason || 'unknown_error'}`,
+      )
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }

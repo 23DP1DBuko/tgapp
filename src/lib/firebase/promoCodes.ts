@@ -14,6 +14,7 @@ import {
   type AppliedPromo,
   type PromoCode,
 } from '../../types/promo'
+import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
 
 const DEFAULT_ADMIN_UPSERT_PROMO_URL = '/api/admin/upsertPromoCode'
 const DEFAULT_ADMIN_DELETE_PROMOS_URL = '/api/admin/deletePromoCodes'
@@ -128,23 +129,25 @@ async function readErrorReason(response: Response): Promise<string> {
 }
 
 export async function createPromoCode(initData: string, input: CreatePromoCodeInput): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          promo: toPromoAdminPayload(input),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        promo: toPromoAdminPayload(input),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to save promo code: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function updatePromoCode(
@@ -152,44 +155,48 @@ export async function updatePromoCode(
   promoId: string,
   input: CreatePromoCodeInput,
 ): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_UPSERT_PROMO_URL || DEFAULT_ADMIN_UPSERT_PROMO_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          promoId,
+          promo: toPromoAdminPayload(input),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        promoId,
-        promo: toPromoAdminPayload(input),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to save promo code: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function deletePromoCode(initData: string, promoId: string): Promise<void> {
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          promoIds: [promoId],
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        promoIds: [promoId],
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to delete promo code: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export async function deleteInactivePromoCodes(
@@ -202,23 +209,25 @@ export async function deleteInactivePromoCodes(
     return
   }
 
-  const response = await fetch(
-    import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_DELETE_PROMOS_URL || DEFAULT_ADMIN_DELETE_PROMOS_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          promoIds: inactivePromos.map((promo) => promo.id),
+        }),
       },
-      body: JSON.stringify({
-        initData,
-        promoIds: inactivePromos.map((promo) => promo.id),
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    throw new Error(`Failed to delete inactive promo codes: ${await readErrorReason(response)}.`)
-  }
+    if (!response.ok) {
+      throw new Error(`${await readErrorReason(response)}`)
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
 export function validatePromoCode(

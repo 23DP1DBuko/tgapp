@@ -1,3 +1,7 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { triggerHapticNotification } from '../../lib/telegram/webApp'
+import { SwipeablePanel } from '../ui/SwipeablePanel'
 import type { AppliedPromo } from '../../types/promo'
 import type {
   CartItem,
@@ -5,6 +9,19 @@ import type {
   CheckoutSubmitState,
   CheckoutSuccessSnapshot,
 } from '../../types/cart'
+
+const MEETUP_LOCATIONS = [
+  { value: 'origo_center', label: 'Origo Center' },
+  { value: 'old_town', label: 'Old Town' },
+  { value: 'akropole', label: 'Akropole' },
+  { value: '__other__', label: 'Other Location' },
+] as const
+
+const TIME_OPTIONS = [
+  { value: 'today_evening', label: 'Today Evening' },
+  { value: 'tomorrow_afternoon', label: 'Tomorrow Afternoon' },
+  { value: 'this_weekend', label: 'This Weekend' },
+] as const
 
 type CheckoutPanelProps = {
   items: CartItem[]
@@ -25,12 +42,17 @@ type CheckoutPanelProps = {
   onSubmit: () => void
   onViewOrders: () => void
   onBackToCatalog: () => void
+  onOpenPrivacy: () => void
+  onOpenTerms: () => void
+  checkoutStep: number
+  onCheckoutStepChange: (step: number) => void
 }
 
 export function CheckoutPanel({
   items,
   form,
   telegramUserLabel,
+  telegramContactHint,
   errorMessage,
   isSubmitted,
   orderId,
@@ -45,6 +67,10 @@ export function CheckoutPanel({
   onSubmit,
   onViewOrders,
   onBackToCatalog,
+  onOpenPrivacy,
+  onOpenTerms,
+  checkoutStep,
+  onCheckoutStepChange,
 }: CheckoutPanelProps) {
   const isSubmitting = submitState === 'submitting'
   const subtotal = items.reduce((sum, item) => sum + item.price, 0)
@@ -79,35 +105,110 @@ export function CheckoutPanel({
       isActive: false,
     },
   ]
-  const checkoutFlow = [
+
+  const [meetupDropdownOpen, setMeetupDropdownOpen] = useState(false)
+  const [timeDropdownOpen, setTimeDropdownOpen] = useState(false)
+  const meetupDropdownRef = useRef<HTMLDivElement>(null)
+  const timeDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (meetupDropdownRef.current && !meetupDropdownRef.current.contains(e.target as Node)) {
+        setMeetupDropdownOpen(false)
+      }
+      if (timeDropdownRef.current && !timeDropdownRef.current.contains(e.target as Node)) {
+        setTimeDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Close meetup dropdown when an option is selected
+  useEffect(() => {
+    setMeetupDropdownOpen(false)
+  }, [form.meetupLocation])
+
+  // Close time dropdown when an option is selected
+  useEffect(() => {
+    setTimeDropdownOpen(false)
+  }, [form.meetupTimeOption])
+
+  // Trigger success haptic once when order is first submitted
+  const prevSubmittedRef = useRef(false)
+  useEffect(() => {
+    if (isSubmitted && orderId && !prevSubmittedRef.current) {
+      prevSubmittedRef.current = true
+      triggerHapticNotification('success')
+    }
+    if (!isSubmitted) {
+      prevSubmittedRef.current = false
+    }
+  }, [isSubmitted, orderId])
+
+  // Trigger error haptic when error message appears
+  useEffect(() => {
+    if (errorMessage) {
+      triggerHapticNotification('error')
+    }
+  }, [errorMessage])
+
+  // Stepper step definitions
+  const steps = [
     {
       label: 'Contact',
-      hint: form.fullName.trim() ? 'Buyer set' : 'Needs name',
-      isComplete: Boolean(form.fullName.trim()),
+      isValid: Boolean(form.fullName.trim()) && Boolean(form.telegramHandle.trim()),
     },
     {
       label: 'Fulfillment',
-      hint: form.fulfillmentType === 'delivery' ? 'Delivery route' : 'Meetup route',
-      isComplete:
+      isValid:
         form.fulfillmentType === 'delivery'
           ? Boolean(form.deliveryCity.trim() && form.deliveryAddress.trim())
-          : Boolean(form.meetupLocation && form.meetupTimeOption),
+          : Boolean(form.meetupLocation.trim()),
     },
     {
       label: 'Payment',
-      hint: form.paymentMethod === 'usdt' ? 'USDT' : 'Cash meetup',
-      isComplete: form.paymentMethod === 'usdt' || form.fulfillmentType === 'meetup',
+      isValid: items.length > 0 && !hasPendingPromoCode,
     },
-    {
-      label: 'Review',
-      hint: `${items.length} piece${items.length === 1 ? '' : 's'}`,
-      isComplete: items.length > 0 && !hasPendingPromoCode,
+  ] as const
+
+  const handleStepClick = useCallback(
+    (stepIndex: number) => {
+      // Can only navigate to previous steps (stepIndex + 1 < checkoutStep)
+      if (stepIndex + 1 < checkoutStep) {
+        onCheckoutStepChange(stepIndex + 1)
+      }
     },
-  ]
+    [checkoutStep, onCheckoutStepChange],
+  )
+
+  const handleGoToNextStep = useCallback(() => {
+    if (checkoutStep < 3) {
+      onCheckoutStepChange(checkoutStep + 1)
+    }
+  }, [checkoutStep, onCheckoutStepChange])
+
+  const handleGoToPrevStep = useCallback(() => {
+    if (checkoutStep > 1) {
+      onCheckoutStepChange(checkoutStep - 1)
+    }
+  }, [checkoutStep, onCheckoutStepChange])
+
+  // ── Label helpers ──
+
+  const selectedLocationLabel =
+    MEETUP_LOCATIONS.find((loc) => loc.value === form.meetupLocation)?.label ?? ''
+  const selectedTimeLabel =
+    TIME_OPTIONS.find((opt) => opt.value === form.meetupTimeOption)?.label ?? ''
+  const isCustomLocation = form.meetupLocation === '__other__'
+
+  // ── Render success state ──
 
   if (isSubmitted) {
     return (
-      <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.24),rgba(255,77,90,0.2))] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      <SwipeablePanel onDismiss={onBackToCatalog} threshold={140}>
+        <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.24),rgba(255,77,90,0.2))] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -234,7 +335,7 @@ export function CheckoutPanel({
               >
                 <div className="h-14 w-12 shrink-0 overflow-hidden rounded-[14px] bg-black/20">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
+                    <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/60">
                       No Img
@@ -272,172 +373,194 @@ export function CheckoutPanel({
           </button>
         </div>
       </article>
+      </SwipeablePanel>
     )
   }
 
+  const isNextDisabled1 = !steps[0].isValid
+  const isNextDisabled2 = !steps[1].isValid
+
   return (
-    <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-4">
-        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-          Checkout
-        </p>
-        <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">
-          Manual Payment
-        </span>
+    <article className="animate-[fade-slide-in_0.4s_ease-out_backwards] rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      {/* ── Compact Stepper ── */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          {steps.map((step, index) => {
+            const stepNum = index + 1
+            const isActive = stepNum === checkoutStep
+            const isPast = stepNum < checkoutStep
+            const isFuture = stepNum > checkoutStep
+            return (
+              <button
+                key={step.label}
+                type="button"
+                disabled={isFuture}
+                onClick={() => handleStepClick(index)}
+                className={`flex flex-col items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.18em] transition-colors ${
+                  isFuture
+                    ? 'cursor-not-allowed text-zinc-600'
+                    : isPast
+                      ? 'cursor-pointer text-emerald-300 hover:text-emerald-200'
+                      : 'text-[var(--shop-cream)]'
+                }`}
+              >
+                <span
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-colors ${
+                    isActive
+                      ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                      : isPast
+                        ? 'bg-emerald-300/20 text-emerald-100'
+                        : 'bg-white/8 text-zinc-500'
+                  }`}
+                >
+                  {isPast ? '✓' : stepNum}
+                </span>
+                <span className="whitespace-nowrap">{step.label}</span>
+              </button>
+            )
+          })}
+        </div>
+        {/* Progress bar */}
+        <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-white/8">
+          <div
+            className="h-full rounded-full bg-[linear-gradient(90deg,var(--shop-purple),var(--shop-red))] transition-all duration-500 ease-out"
+            style={{ width: `${((checkoutStep - 1) / (steps.length - 1)) * 100}%` }}
+          />
+        </div>
       </div>
 
-      <div className="mt-5 space-y-4">
-        <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.12),rgba(255,77,90,0.08))] p-4">
+      {/* ── STEP 1: Contact Information ── */}
+      {checkoutStep === 1 && (
+        <div className="space-y-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Steps
+            <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+              Step 1 — Contact Information
             </p>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-              {checkoutFlow.filter((step) => step.isComplete).length}/4 ready
-            </span>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              How should we reach you about your order?
+            </p>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            {checkoutFlow.map((step) => (
-              <div key={step.label} className="rounded-[20px] border border-white/10 bg-black/15 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    {step.label}
-                  </p>
-                  <span
-                    className={`rounded-full px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.16em] ${
-                      step.isComplete
-                        ? 'bg-emerald-300/18 text-emerald-100'
-                        : 'bg-white/8 text-[var(--shop-muted)]'
-                    }`}
-                  >
-                    {step.isComplete ? 'Ready' : 'Open'}
-                  </span>
-                </div>
-                <p className="mt-2 text-xs uppercase tracking-[0.16em] text-[var(--shop-cream)]">
-                  {step.hint}
-                </p>
-              </div>
-            ))}
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+              Full Name <span className="text-[var(--shop-red)]">*</span>
+            </span>
+            <input
+              value={form.fullName}
+              onChange={(e) => onChangeForm('fullName', e.target.value)}
+              className={inputClassName}
+              placeholder="Your name"
+              autoComplete="name"
+            />
+          </label>
+
+          <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
+            <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+              Telegram Account <span className="text-[var(--shop-red)]">*</span>
+            </span>
+            <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
+              {telegramUserLabel}
+            </p>
+            <p className="mt-1 text-[10px] leading-4 text-zinc-500">
+              {telegramContactHint}
+            </p>
+          </div>
+
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+              Note
+            </span>
+            <textarea
+              value={form.note}
+              onChange={(e) => onChangeForm('note', e.target.value)}
+              className={`${inputClassName} min-h-24 resize-y`}
+              placeholder="Any extra preferences or wishes for your order..."
+            />
+          </label>
+
+          <div className="flex gap-3 pt-2">
+            {checkoutStep > 1 && (
+              <button
+                type="button"
+                onClick={handleGoToPrevStep}
+                className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
+              >
+                ← Back
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleGoToNextStep}
+              disabled={isNextDisabled1}
+              className="flex-1 rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+            >
+              Next →
+            </button>
           </div>
         </div>
+      )}
 
-        <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Step 1
-              </p>
-              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
-                Contact
-              </p>
-            </div>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Buyer
-            </span>
+      {/* ── STEP 2: Fulfillment Method ── */}
+      {checkoutStep === 2 && (
+        <div className="space-y-5">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+              Step 2 — Fulfillment Method
+            </p>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              Choose how you&apos;d like to receive your order.
+            </p>
           </div>
 
-          <div className="mt-4 space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Full Name
-              </span>
-              <input
-                value={form.fullName}
-                onChange={(event) => onChangeForm('fullName', event.target.value)}
-                className={inputClassName}
-                placeholder="Your name"
-              />
-            </label>
-
-            <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
-              <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Telegram Account
-              </span>
-              <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
-                {telegramUserLabel}
-              </p>
-
-            </div>
-
-            <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Note
-              </span>
-              <textarea
-                value={form.note}
-                onChange={(event) => onChangeForm('note', event.target.value)}
-                className={`${inputClassName} min-h-24 resize-y`}
-                placeholder="Optional"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Step 2
-              </p>
-              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
-                Fulfillment
-              </p>
-            </div>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              {form.fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup'}
-            </span>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3">
+          {/* Tabs: Meetup / Delivery */}
+          <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={() => onChangeForm('fulfillmentType', 'meetup')}
-              className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
+              className={`rounded-2xl border px-4 py-3.5 text-left text-sm transition-all active:scale-[0.98] ${
                 form.fulfillmentType === 'meetup'
                   ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
-                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)]'
+                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
               }`}
             >
-              <span className="block font-semibold uppercase tracking-[0.14em]">Meetup</span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em]">Meetup</span>
+              <span className="mt-1 block text-[10px] text-zinc-500">In-person handoff</span>
             </button>
             <button
               type="button"
               onClick={() => onChangeForm('fulfillmentType', 'delivery')}
-              className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
+              className={`rounded-2xl border px-4 py-3.5 text-left text-sm transition-all active:scale-[0.98] ${
                 form.fulfillmentType === 'delivery'
                   ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
-                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)]'
+                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
               }`}
             >
-              <span className="block font-semibold uppercase tracking-[0.14em]">Delivery</span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em]">Delivery</span>
+              <span className="mt-1 block text-[10px] text-zinc-500">Shipped to address</span>
             </button>
           </div>
-        </div>
 
-        {form.fulfillmentType === 'delivery' ? (
-          <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Delivery Details
-            </p>
-            <div className="mt-3 space-y-4">
+          {/* ── Delivery Fields ── */}
+          {form.fulfillmentType === 'delivery' ? (
+            <div className="space-y-4">
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  City
+                  City <span className="text-[var(--shop-red)]">*</span>
                 </span>
                 <input
                   value={form.deliveryCity}
-                  onChange={(event) => onChangeForm('deliveryCity', event.target.value)}
+                  onChange={(e) => onChangeForm('deliveryCity', e.target.value)}
                   className={inputClassName}
                   placeholder="Riga"
                 />
               </label>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Address
+                  Address <span className="text-[var(--shop-red)]">*</span>
                 </span>
                 <input
                   value={form.deliveryAddress}
-                  onChange={(event) => onChangeForm('deliveryAddress', event.target.value)}
+                  onChange={(e) => onChangeForm('deliveryAddress', e.target.value)}
                   className={inputClassName}
                   placeholder="Street, house, apartment"
                 />
@@ -448,257 +571,416 @@ export function CheckoutPanel({
                 </span>
                 <textarea
                   value={form.deliveryNotes}
-                  onChange={(event) => onChangeForm('deliveryNotes', event.target.value)}
+                  onChange={(e) => onChangeForm('deliveryNotes', e.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Extra info"
+                  placeholder="Please provide entrance code, floor, apartment number, or drop-off details..."
                 />
               </label>
             </div>
-          </div>
-        ) : (
-          <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Meetup Details
-            </p>
-            <div className="mt-3 space-y-4">
+          ) : (
+            /* ── Meetup Fields ── */
+            <div className="space-y-4">
+              {/* Custom Meetup Location Dropdown */}
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Meetup Location
+                  Meetup Location <span className="text-[var(--shop-red)]">*</span>
                 </span>
-                <select
-                  value={form.meetupLocation}
-                  onChange={(event) => onChangeForm('meetupLocation', event.target.value)}
-                  className={inputClassName}
-                >
-                  <option value="">Select location</option>
-                  <option value="origo_center">Origo Center</option>
-                  <option value="old_town">Old Town</option>
-                  <option value="akropole">Akropole</option>
-                </select>
+                <div className="relative" ref={meetupDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setMeetupDropdownOpen((prev) => !prev)}
+                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors ${
+                      form.meetupLocation
+                        ? 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
+                        : 'border-white/10 bg-white/6 text-zinc-500'
+                    }`}
+                  >
+                    <span>
+                      {form.meetupLocation
+                        ? isCustomLocation && form.deliveryAddress
+                          ? form.deliveryAddress
+                          : selectedLocationLabel
+                        : 'Select a meetup location'}
+                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className={`h-4 w-4 flex-shrink-0 transition-transform ${meetupDropdownOpen ? 'rotate-180' : ''}`}
+                      aria-hidden="true"
+                    >
+          <g transform="translate(2, 2)">
+
+                      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                    
+          </g>
+        </svg>
+                  </button>
+
+                  {meetupDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                      {MEETUP_LOCATIONS.map((loc) => (
+                        <button
+                          key={loc.value}
+                          type="button"
+                          onClick={() => onChangeForm('meetupLocation', loc.value)}
+                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 ${
+                            form.meetupLocation === loc.value
+                              ? 'bg-white/10 text-[var(--shop-cream)]'
+                              : 'text-zinc-400'
+                          }`}
+                        >
+                          {form.meetupLocation === loc.value && (
+                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden="true">
+          <g transform="translate(2, 2)">
+
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            
+          </g>
+        </svg>
+                          )}
+                          {loc.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </label>
+
+              {/* Custom location text input (shown when "Other Location" is selected) */}
+              {isCustomLocation && (
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                    Specify Location <span className="text-[var(--shop-red)]">*</span>
+                  </span>
+                  <input
+                    value={form.deliveryAddress}
+                    onChange={(e) => onChangeForm('deliveryAddress', e.target.value)}
+                    className={inputClassName}
+                    placeholder="Enter your meetup address..."
+                    autoComplete="off"
+                  />
+                </label>
+              )}
+
+              {/* Custom Time Window Dropdown (optional) */}
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
                   Time Window
                 </span>
-                <select
-                  value={form.meetupTimeOption}
-                  onChange={(event) => onChangeForm('meetupTimeOption', event.target.value)}
-                  className={inputClassName}
-                >
-                  <option value="">Select time option</option>
-                  <option value="today_evening">Today Evening</option>
-                  <option value="tomorrow_afternoon">Tomorrow Afternoon</option>
-                  <option value="this_weekend">This Weekend</option>
-                </select>
+                <div className="relative" ref={timeDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setTimeDropdownOpen((prev) => !prev)}
+                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors ${
+                      form.meetupTimeOption
+                        ? 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
+                        : 'border-white/10 bg-white/6 text-zinc-500'
+                    }`}
+                  >
+                    <span>
+                      {form.meetupTimeOption ? selectedTimeLabel : 'Select a time window (optional)'}
+                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className={`h-4 w-4 flex-shrink-0 transition-transform ${timeDropdownOpen ? 'rotate-180' : ''}`}
+                      aria-hidden="true"
+                    >
+          <g transform="translate(2, 2)">
+
+                      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                    
+          </g>
+        </svg>
+                  </button>
+
+                  {timeDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                      {TIME_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => onChangeForm('meetupTimeOption', opt.value)}
+                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 ${
+                            form.meetupTimeOption === opt.value
+                              ? 'bg-white/10 text-[var(--shop-cream)]'
+                              : 'text-zinc-400'
+                          }`}
+                        >
+                          {form.meetupTimeOption === opt.value && (
+                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden="true">
+          <g transform="translate(2, 2)">
+
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            
+          </g>
+        </svg>
+                          )}
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {!form.meetupTimeOption && (
+                  <p className="mt-1.5 text-[10px] text-zinc-500">
+                    You can leave this blank and specify your time preferences in the notes below.
+                  </p>
+                )}
               </label>
+
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
                   Meetup Notes
                 </span>
                 <textarea
                   value={form.meetupNotes}
-                  onChange={(event) => onChangeForm('meetupNotes', event.target.value)}
+                  onChange={(e) => onChangeForm('meetupNotes', e.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Notes"
+                  placeholder="Describe land markers or your exact preferred arrival time here..."
                 />
               </label>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Step 3
-              </p>
-              <p className="mt-1 text-sm font-semibold text-[var(--shop-cream)]">
-                Payment Method
-              </p>
-            </div>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              {form.paymentMethod === 'usdt' ? 'USDT' : 'Cash'}
-            </span>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={() => onChangeForm('paymentMethod', 'meetup_cash')}
-              disabled={form.fulfillmentType === 'delivery'}
-              className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
-                form.paymentMethod === 'meetup_cash'
-                  ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
-                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)]'
-              } disabled:cursor-not-allowed disabled:opacity-40`}
+              onClick={handleGoToPrevStep}
+              className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
             >
-              <span className="block font-semibold uppercase tracking-[0.14em]">
-                Meetup Cash
-              </span>
-
+              ← Back
             </button>
             <button
               type="button"
-              onClick={() => onChangeForm('paymentMethod', 'usdt')}
-              className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
-                form.paymentMethod === 'usdt'
-                  ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
-                  : 'border-white/10 bg-white/6 text-[var(--shop-muted)]'
-              }`}
+              onClick={handleGoToNextStep}
+              disabled={isNextDisabled2}
+              className="flex-1 rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
-              <span className="block font-semibold uppercase tracking-[0.14em]">USDT</span>
-
+              Next →
             </button>
           </div>
         </div>
+      )}
 
-        <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Order Review
-              </p>
-
-            </div>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              {items.length} pieces
-            </span>
+      {/* ── STEP 3: Payment, Summary & Final Preview ── */}
+      {checkoutStep === 3 && (
+        <div className="space-y-5">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+              Step 3 — Payment & Review
+            </p>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              Choose payment method and confirm your order.
+            </p>
           </div>
 
-          <div className="mt-4 space-y-3">
+          {/* Payment Method Selector */}
+          <div className="space-y-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+              Payment Method
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => onChangeForm('paymentMethod', 'meetup_cash')}
+                disabled={form.fulfillmentType === 'delivery'}
+                className={`rounded-2xl border px-4 py-3.5 text-left text-sm transition-all active:scale-[0.98] ${
+                  form.paymentMethod === 'meetup_cash'
+                    ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
+                    : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                <span className="block text-xs font-bold uppercase tracking-[0.16em]">Meetup Cash</span>
+                <span className="mt-1 block text-[10px] text-zinc-500">Pay in person</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeForm('paymentMethod', 'usdt')}
+                className={`rounded-2xl border px-4 py-3.5 text-left text-sm transition-all active:scale-[0.98] ${
+                  form.paymentMethod === 'usdt'
+                    ? 'border-[var(--shop-red)] bg-[var(--shop-red)]/12 text-[var(--shop-cream)]'
+                    : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
+                }`}
+              >
+                <span className="block text-xs font-bold uppercase tracking-[0.16em]">USDT (TRC-20)</span>
+                <span className="mt-1 block text-[10px] text-zinc-500">Crypto payment</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Promo Code */}
+          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+              Promo Code
+            </p>
+            <div className="mt-3 flex items-end gap-3">
+              <label className="block min-w-0 flex-1">
+                <input
+                  value={form.promoCode}
+                  onChange={(e) => onChangeForm('promoCode', e.target.value.toUpperCase())}
+                  className={inputClassName}
+                  placeholder="DROP10"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={onApplyPromo}
+                disabled={isApplyingPromo || isSubmitting}
+                className="rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isApplyingPromo ? 'Applying...' : 'Apply'}
+              </button>
+            </div>
+
+            {promoFeedback ? (
+              <p className="mt-3 text-sm text-zinc-400">{promoFeedback}</p>
+            ) : null}
+            {appliedPromo ? (
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
+                Applied {appliedPromo.code} for -{appliedPromo.discountAmount} EUR
+              </p>
+            ) : null}
+            {hasPendingPromoCode ? (
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-red)]">
+                Apply this promo code or clear it before checkout.
+              </p>
+            ) : null}
+          </div>
+
+          {/* Order Review - Product Cards */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+              Order Review
+            </p>
             {items.map((item) => (
               <div
                 key={item.productId}
                 className="flex items-center gap-3 rounded-[20px] border border-white/10 bg-black/15 p-3"
               >
-                <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[14px] bg-black/20">
+                <div className="h-16 w-14 shrink-0 overflow-hidden rounded-2xl bg-black/20">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
+                    <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                    <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                       No Img
                     </div>
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[var(--shop-cream)]">
-                    {item.name}
-                  </p>
-
+                  <p className="truncate text-sm font-semibold text-[var(--shop-cream)]">{item.name}</p>
                 </div>
-                <span className="text-sm font-semibold text-[var(--shop-cream)]">
+                <span className="shrink-0 text-sm font-semibold text-[var(--shop-cream)]">
                   {item.price} {item.currency}
                 </span>
               </div>
             ))}
           </div>
-        </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Promo
+          {/* Mini Order Preview Summary */}
+          <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+              Order Summary
+            </p>
+            <div className="mt-2 space-y-1.5">
+              <p className="text-xs text-zinc-400">
+                {form.fulfillmentType === 'delivery'
+                  ? `Deliver to: ${form.deliveryCity}${form.deliveryAddress ? `, ${form.deliveryAddress}` : ''}`
+                  : isCustomLocation && form.deliveryAddress
+                    ? `Meetup: ${form.deliveryAddress}`
+                    : `Meetup: ${selectedLocationLabel || 'TBD'}`}
+                {form.fulfillmentType === 'meetup' && form.meetupTimeOption
+                  ? ` — ${selectedTimeLabel}`
+                  : ''}
               </p>
-
+              <p className="text-xs text-zinc-400">
+                Contact: {form.fullName}
+              </p>
+              <p className="text-xs text-zinc-400">
+                Payment: {form.paymentMethod === 'usdt' ? 'USDT (TRC-20)' : 'Meetup Cash'}
+              </p>
             </div>
-            <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Optional
-            </span>
           </div>
 
-          <div className="flex items-end gap-3">
-            <label className="block min-w-0 flex-1">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Promo Code
-              </span>
-              <input
-                value={form.promoCode}
-                onChange={(event) =>
-                  onChangeForm('promoCode', event.target.value.toUpperCase())
-                }
-                className={inputClassName}
-                placeholder="DROP10"
-              />
-            </label>
+          {/* Final Review - Totals */}
+          <div className="rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.14),rgba(255,77,90,0.1))] px-4 py-4">
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between text-sm text-zinc-400">
+                <span>Subtotal</span>
+                <span>{subtotal} EUR</span>
+              </div>
+              {appliedPromo ? (
+                <div className="flex items-center justify-between text-sm text-zinc-400">
+                  <span>Discount</span>
+                  <span>-{discountAmount} EUR</span>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between border-t border-white/10 pt-2.5 text-sm font-semibold text-[var(--shop-cream)]">
+                <span>Total</span>
+                <span>{total} EUR</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Error message */}
+          {errorMessage ? (
+            <div className="rounded-2xl bg-[var(--shop-red)]/16 px-4 py-3">
+              <p className="text-sm text-[var(--shop-cream)]">{errorMessage}</p>
+            </div>
+          ) : null}
+
+          {/* Legal disclaimer */}
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+            <p className="text-xs leading-5 text-zinc-400">
+              By submitting this request, you agree that this is an{' '}
+              <strong className="text-zinc-300">order request</strong>, not a final purchase.
+              Payment, delivery, returns, and final order confirmation occur on{' '}
+              <strong className="text-zinc-300">Depop/Yaga</strong> or by separate agreement
+              with the seller. See our{' '}
+              <button
+                type="button"
+                onClick={onOpenPrivacy}
+                className="font-semibold underline decoration-[var(--shop-purple)]/50 hover:decoration-[var(--shop-purple)] text-[var(--shop-cream)]"
+              >
+                Privacy Policy
+              </button>
+              {' '}and{' '}
+              <button
+                type="button"
+                onClick={onOpenTerms}
+                className="font-semibold underline decoration-[var(--shop-purple)]/50 hover:decoration-[var(--shop-purple)] text-[var(--shop-cream)]"
+              >
+                Terms of Service
+              </button>.
+            </p>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={onApplyPromo}
-              disabled={isApplyingPromo || isSubmitting}
-              className="rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleGoToPrevStep}
+              className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
             >
-              {isApplyingPromo ? 'Applying...' : 'Apply'}
+              ← Back
+            </button>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={hasPendingPromoCode || isSubmitting}
+              className="flex-[2] rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+            >
+              {isSubmitting ? 'Sending Order Request...' : 'Send Order Request'}
             </button>
           </div>
-
-          {promoFeedback ? (
-            <p className="mt-3 text-sm text-[var(--shop-muted)]">{promoFeedback}</p>
-          ) : null}
-
-          {appliedPromo ? (
-            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-              Applied {appliedPromo.code} for -{appliedPromo.discountAmount} EUR
-            </p>
-          ) : null}
-
-          {hasPendingPromoCode ? (
-            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-red)]">
-              Apply this promo code or clear it before checkout.
-            </p>
-          ) : null}
         </div>
-
-        <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.14),rgba(255,77,90,0.1))] px-4 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-            Final Review
-          </p>
-
-          <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-            <span>Items</span>
-            <span>{items.length}</span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-sm text-[var(--shop-muted)]">
-            <span>Subtotal</span>
-            <span>{subtotal} EUR</span>
-          </div>
-          {appliedPromo ? (
-            <div className="mt-2 flex items-center justify-between text-sm text-[var(--shop-muted)]">
-              <span>Promo</span>
-              <span>-{discountAmount} EUR</span>
-            </div>
-          ) : null}
-          <div className="mt-3 flex items-center justify-between text-sm font-semibold text-[var(--shop-cream)]">
-            <span>Total</span>
-            <span>{total} EUR</span>
-          </div>
-        </div>
-
-        {errorMessage ? (
-          <p className="rounded-2xl bg-[var(--shop-red)]/16 px-4 py-3 text-sm text-[var(--shop-cream)]">
-            {errorMessage}
-          </p>
-        ) : null}          {isSubmitting ? (
-            <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                Sending Request
-              </p>
-            </div>
-          ) : null}
-
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={hasPendingPromoCode || isSubmitting}
-          className="w-full rounded-[24px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isSubmitting ? 'Sending Order Request...' : 'Send Order Request'}
-        </button>
-      </div>
+      )}
     </article>
   )
 }
 
 const inputClassName =
-  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
+  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-500/80 focus:border-[var(--shop-red)]'
 
 function getCheckoutSuccessSummary(form: CheckoutForm) {
   if (form.fulfillmentType === 'delivery' && form.paymentMethod === 'usdt') {

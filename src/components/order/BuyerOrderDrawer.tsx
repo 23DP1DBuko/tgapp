@@ -13,16 +13,43 @@ type BuyerOrderDrawerProps = {
   onClose: () => void
 }
 
+import { useEffect, useState } from 'react'
+
 export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
+
+  // Trigger open animation on mount
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setIsOpen(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  function handleClose() {
+    setIsClosing(true)
+    setTimeout(() => {
+      onClose()
+    }, 300)
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/45 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end p-4">
+      {/* Backdrop */}
       <button
         type="button"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default"
+        onClick={handleClose}
+        className={`absolute inset-0 cursor-default transition-opacity duration-300 ease-out ${
+          isOpen && !isClosing ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
         aria-label="Close order detail"
       />
-      <article className="relative max-h-[85vh] w-full overflow-y-auto rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(35,16,37,0.98),rgba(18,10,24,0.98))] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)]">
+      {/* Sheet panel */}
+      <article
+        className={`relative max-h-[85vh] w-full overflow-y-auto rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(35,16,37,0.98),rgba(18,10,24,0.98))] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] transition-transform duration-300 ease-out ${
+          isOpen && !isClosing ? 'translate-y-0' : 'translate-y-full'
+        }`}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
@@ -34,7 +61,7 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
           >
             Close

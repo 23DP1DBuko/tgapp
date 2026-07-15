@@ -12,6 +12,7 @@ import {
   type PromoCode,
   type PromoDiscountType,
 } from '../../types/promo'
+import { CustomSelect } from '../ui/CustomSelect'
 
 type PromoAdminPanelProps = {
   isEnabled: boolean
@@ -249,26 +250,25 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Mode
           </span>
-          <select
+          <CustomSelect
             value={selectedPromoId}
-            onChange={(event) => handlePromoSelection(event.target.value)}
-            className={darkSelectClassName}
-          >
-            <option value="new">Create new promo code</option>
-            {promos.map((promo) => {
-              const usedCount = promo.usageCount ?? 0
-              const usageLabel =
-                promo.usageLimit !== null
-                  ? `${usedCount}/${promo.usageLimit}`
-                  : `${usedCount} used`
+            options={[
+              { value: 'new', label: 'Create new promo code' },
+              ...promos.map((promo) => {
+                const usedCount = promo.usageCount ?? 0
+                const usageLabel =
+                  promo.usageLimit !== null
+                    ? `${usedCount}/${promo.usageLimit}`
+                    : `${usedCount} used`
 
-              return (
-                <option key={promo.id} value={promo.id}>
-                  Edit: {promo.code} · {usageLabel}
-                </option>
-              )
-            })}
-          </select>
+                return {
+                  value: promo.id,
+                  label: `Edit: ${promo.code} · ${usageLabel}`,
+                }
+              }),
+            ]}
+            onChange={handlePromoSelection}
+          />
         </label>
 
         <div className="grid grid-cols-2 gap-3">
@@ -307,22 +307,19 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Discount Type
             </span>
-            <select
+            <CustomSelect
               value={form.discountType}
-              onChange={(event) =>
+              options={PROMO_DISCOUNT_TYPES.map((type) => ({
+                value: type,
+                label: type,
+              }))}
+              onChange={(value) =>
                 setForm((current) => ({
                   ...current,
-                  discountType: event.target.value as PromoDiscountType,
+                  discountType: value as PromoDiscountType,
                 }))
               }
-              className={darkSelectClassName}
-            >
-              {PROMO_DISCOUNT_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
+            />
           </label>
 
         <div className="grid grid-cols-2 gap-3">
@@ -402,6 +399,7 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             type="button"
             role="switch"
             aria-checked={form.isActive}
+            aria-label="Toggle promo code active status"
             onClick={() =>
               setForm((current) => ({ ...current, isActive: !current.isActive }))
             }
@@ -469,5 +467,3 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
 const inputClassName =
   'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
 
-const darkSelectClassName =
-  'w-full rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition focus:border-[var(--shop-red)]'

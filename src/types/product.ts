@@ -24,4 +24,9 @@ export type Product = {
   images: string[]
   createdAt: Timestamp | null
   isLimitedLabel?: string
+  upcoming?: boolean
+  earlyAccessAt?: Timestamp | null
+  publicAt?: Timestamp | null
+  reservedBy?: number | null
+  reservedUntil?: Timestamp | null
 }

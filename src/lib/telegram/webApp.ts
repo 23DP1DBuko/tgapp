@@ -53,6 +53,34 @@ declare global {
           notificationOccurred(type: 'error' | 'success' | 'warning'): void
           selectionChanged(): void
         }
+        disableVerticalSwipes(): void
+        enableVerticalSwipes(): void
+        onEvent(eventType: string, callback: (event?: Record<string, unknown>) => void): void
+        offEvent(eventType: string, callback: (event?: Record<string, unknown>) => void): void
+        BackButton?: {
+          isVisible: boolean
+          show(): void
+          hide(): void
+          onClick(callback: () => void): void
+          offClick(callback: () => void): void
+        }
+        MainButton?: {
+          isVisible: boolean
+          isActive: boolean
+          isProgressVisible: boolean
+          text: string
+          color: string
+          textColor: string
+          show(): void
+          hide(): void
+          enable(): void
+          disable(): void
+          showProgress(): void
+          hideProgress(): void
+          setText(text: string): void
+          onClick(callback: () => void): void
+          offClick(callback: () => void): void
+        }
       }
     }
   }
@@ -81,5 +109,39 @@ export function triggerHapticFeedback(
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(style)
   } catch {
     // Haptics are a progressive enhancement — ignore in dev/unsupported env
+  }
+}
+
+export function triggerHapticNotification(
+  type: 'error' | 'success' | 'warning',
+) {
+  try {
+    window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred(type)
+  } catch {
+    // Haptics are a progressive enhancement
+  }
+}
+
+export function triggerHapticSelection() {
+  try {
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged()
+  } catch {
+    // Haptics are a progressive enhancement
+  }
+}
+
+export function disableVerticalSwipes() {
+  try {
+    window.Telegram?.WebApp?.disableVerticalSwipes()
+  } catch {
+    // Progressive enhancement
+  }
+}
+
+export function enableVerticalSwipes() {
+  try {
+    window.Telegram?.WebApp?.enableVerticalSwipes()
+  } catch {
+    // Progressive enhancement
   }
 }

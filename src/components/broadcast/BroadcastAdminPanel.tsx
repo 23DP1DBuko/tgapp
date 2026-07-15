@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import {
   listBroadcasts,
   sendBroadcast,
-  deleteBroadcast,
 } from '../../lib/firebase/broadcasts'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import type { Broadcast } from '../../types/broadcast'
@@ -25,8 +24,6 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
     tone: 'success' | 'error'
     message: string
   } | null>(null)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-
   async function loadHistory() {
     try {
       setLoading(true)
@@ -74,25 +71,6 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
       })
     } finally {
       setSending(false)
-    }
-  }
-
-  async function handleDelete(broadcastId: string) {
-    setDeleteConfirmId(null)
-    triggerHapticFeedback('light')
-
-    try {
-      await deleteBroadcast(initData, broadcastId)
-      setItems((current) => current.filter((item) => item.id !== broadcastId))
-      setFeedback({
-        tone: 'success',
-        message: 'Broadcast deleted.',
-      })
-    } catch (err) {
-      setFeedback({
-        tone: 'error',
-        message: err instanceof Error ? err.message : 'Failed to delete broadcast.',
-      })
     }
   }
 
@@ -229,54 +207,11 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
                     key={broadcast.id}
                     className="rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3"
                   >
-                    {/* Header row: timestamp + delete */}
-                    <div className="flex items-start justify-between gap-2">
+                    {/* Header row: timestamp */}
+                    <div>
                       <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]/70">
                         {formatTimestamp(broadcast.createdAt)}
                       </p>
-                      {deleteConfirmId === broadcast.id ? (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(broadcast.id)}
-                            className="rounded-full bg-[var(--shop-red)]/18 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteConfirmId(null)}
-                            className="rounded-full bg-white/8 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerHapticFeedback('light')
-                            setDeleteConfirmId(broadcast.id)
-                          }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/8 text-[var(--shop-muted)] transition-colors hover:bg-[var(--shop-red)]/18 hover:text-[var(--shop-red)]"
-                          aria-label="Delete broadcast"
-                        >
-                          <svg
-                            viewBox="0 0 16 16"
-                            className="h-3.5 w-3.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                          >
-                            <path d="M2 4h12" />
-                            <path d="M5 4V2.5a.5.5 0 01.5-.5h5a.5.5 0 01.5.5V4" />
-                            <path d="M13 4v9.5a1 1 0 01-1 1H4a1 1 0 01-1-1V4" />
-                          </svg>
-                        </button>
-                      )}
                     </div>
 
                     {/* Admin ID tag */}
@@ -294,17 +229,25 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
                     {/* Delivery metrics */}
                     <div className="mt-3 flex items-center gap-3">
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
-                        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="currentColor" aria-hidden="true">
+          <g transform="translate(4, 4)">
+
                           <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 3.5a.75.75 0 011.5 0V8a.75.75 0 01-1.5 0V4.5zM8 10.5a.75.75 0 100 1.5.75.75 0 000-1.5z" />
-                        </svg>
+                        
+          </g>
+        </svg>
                         {broadcast.sentCount} Sent
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <g transform="translate(4, 4)">
+
                           <circle cx="8" cy="8" r="6" />
                           <path d="M8 5v3.5" />
                           <path d="M8 11.5v.01" />
-                        </svg>
+                        
+          </g>
+        </svg>
                         {broadcast.failedCount} Failed
                       </span>
                     </div>

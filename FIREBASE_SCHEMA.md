@@ -37,6 +37,9 @@ type ProductDocument = {
   images: string[]
   createdAt: Timestamp | null
   isLimitedLabel?: string
+  upcoming?: boolean
+  earlyAccessAt?: string | null
+  publicAt?: string | null
 }
 ```
 
@@ -48,6 +51,11 @@ Notes:
 - `cartCount` is a shared storefront signal for how many users currently have the item in cart.
 - `images` stores Firebase Storage download URLs and supports multiple product images.
 - `isLimitedLabel` is optional and is used for manual labels such as `1 of 1` or `Limited Drop`.
+- `upcoming` is an optional boolean to mark a product as upcoming.
+- `earlyAccessAt` is an optional ISO datetime string for the start of early access windows.
+- `publicAt` is an optional ISO datetime string for when public release begins.
+- `reservedBy` is an optional number storing the Telegram user ID who currently has a reservation hold on the product.
+- `reservedUntil` is an optional Timestamp indicating when the current reservation expires. When this time passes, the product can be reserved by another buyer. Both `reservedBy` and `reservedUntil` are set/cleared together by the `reserveProduct` and `releaseReservation` Cloud Functions, and are cleared during successful checkout. The reservation duration defaults to 15 minutes and is configurable via the `RESERVATION_DURATION_MS` environment variable on Cloud Functions.
 
 ---
 
@@ -348,6 +356,142 @@ These should only be documented in detail once their real implementation is conf
 
 ---
 
+## Additional collections
+
+### `campaigns`
+
+This collection stores marketing campaign/carousel entries managed by the admin panel.
+
+Document shape:
+
+```ts
+type CampaignDocument = {
+  tag: string
+  headingPart1: string
+  headingPart2: string
+  subtitle: string
+  isActive: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+```
+
+Notes:
+- Documents are ordered by `sortOrder` ascending.
+- The admin `CarouselManagerPanel` and `CampaignAdminPanel` manage these entries.
+- Public read, writes only via Cloud Functions.
+
+---
+
+### `giveaways`
+
+This collection stores giveaway entries shown in the Rewards section.
+
+Document shape:
+
+```ts
+type GiveawayDocument = {
+  productId: string
+  productName: string
+  productImage: string
+  totalTickets: number
+  enteredCount: number
+  endsAt: string | null
+  isActive: boolean
+  winnerUsername: string | null
+  createdAt: string
+  updatedAt: string
+}
+```
+
+Notes:
+- Public read, writes only via Cloud Functions.
+- `totalTickets` is the number of tickets needed to enter.
+- `enteredCount` tracks current entries.
+
+---
+
+### `tasks`
+
+This collection stores reward tasks shown in the Rewards section.
+
+Document shape:
+
+```ts
+type TaskDocument = {
+  title: string
+  rewardType: 'coupon' | 'ticket'
+  rewardValue: string
+  status: 'active' | 'inactive'
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+```
+
+Notes:
+- Public read, writes only via Cloud Functions.
+- `rewardValue` depends on `rewardType` — a coupon code or ticket count string.
+
+---
+
+### `bannerSlides`
+
+This collection stores hero carousel slides for the storefront.
+
+Document shape:
+
+```ts
+type BannerSlideDocument = {
+  imageUrl: string
+  badgeText: string
+  headline: string
+  subheading: string
+  caption: string
+  isActive: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+```
+
+Notes:
+- Public read. Writes currently go through direct Firestore client access (not Cloud Functions).
+- Ordered by `sortOrder` ascending.
+- The `CarouselManagerPanel` manages these slides.
+
+---
+
+### `telegramSubscribers`
+
+This collection stores Telegram users who have interacted with the bot (`/start` command).
+
+Document shape:
+
+```ts
+type TelegramSubscriberDocument = {
+  telegramUserId: number
+  chatId: number
+  username: string | null
+  firstName: string | null
+  isAdmin: boolean
+  allowBroadcasts: boolean
+  createdAt: Timestamp
+  lastSeenAt: Timestamp
+  referredBy?: string
+}
+```
+
+Notes:
+- Document ID is the stringified `telegramUserId`.
+- Created/updated server-side by the `telegramBotWebhook` Cloud Function.
+- Read and write access is denied from the client; only Functions can access.
+- `allowBroadcasts` is used by the broadcast function to filter recipients.
+- `referredBy` is an optional field for tracking referral sources.
+
+---
+
 ## Security rules summary
 
 The following table summarizes the Firestore security rules for each collection:
@@ -358,6 +502,15 @@ The following table summarizes the Firestore security rules for each collection:
 | `promoCodes` | Public | Denied | Writes handled by Cloud Functions |
 | `orders` | Denied | Denied | All access via Cloud Functions |
 | `broadcasts` | Public | Denied | Writes handled server-side by Telegram bot |
+| `campaigns` | Public | Denied | Writes handled by Cloud Functions |
+| `giveaways` | Public | Denied | Writes handled by Cloud Functions |
+| `tasks` | Public | Denied | Writes handled by Cloud Functions |
+| `bannerSlides` | Public | Denied | Writes handled by Cloud Functions or direct Firestore |
+| `polls` | Public | Denied | Writes handled by Cloud Functions |
+| `pollVotes` | Denied | Denied | All access via Cloud Functions only |
+| `telegramSubscribers` | Denied | Denied | All access via Cloud Functions only |
+| `productNotifySubscriptions` | Denied | Denied | All access via Cloud Functions only |
+| `userRewards` | Denied | Denied | All access via Cloud Functions only |
 
 ---
 

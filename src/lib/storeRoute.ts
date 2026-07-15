@@ -7,14 +7,19 @@ export type StoreScreen =
   | 'checkout'
   | 'success'
   | 'rewards'
+  | 'polls'
+  | 'privacy'
+  | 'terms'
+  | 'about'
 
-export type AdminSubView = 'overview' | 'products' | 'promos' | 'orders' | 'broadcasts' | 'campaigns' | 'rewards' | 'dashboard'
+export type AdminSubView = 'dashboard' | 'catalog' | 'growth' | 'orders' | 'rewards'
 
 export type RouteState = {
   activeView: 'store' | 'admin'
   storeScreen: StoreScreen
   adminSubView: AdminSubView
   selectedProductId: string | null
+  checkoutStep: number
 }
 
 export function readRouteFromHash(): RouteState {
@@ -22,40 +27,53 @@ export function readRouteFromHash(): RouteState {
     return {
       activeView: 'store',
       storeScreen: 'catalog',
-      adminSubView: 'overview',
+      adminSubView: 'dashboard',
       selectedProductId: null,
+      checkoutStep: 1,
     }
   }
 
   const rawHash = window.location.hash.replace(/^#\/?/, '')
-  const [root, subview, selectedProductId] = rawHash.split('/')
+  const [root, subview, third] = rawHash.split('/')
 
   if (root === 'admin') {
     return {
       activeView: 'admin',
       storeScreen: 'catalog',
-      adminSubView: isAdminSubview(subview) ? subview : 'overview',
+      adminSubView: isAdminSubview(subview) ? subview : 'dashboard',
       selectedProductId: null,
+      checkoutStep: 1,
     }
   }
 
   if (root === 'store') {
     const nextStoreScreen = isStoreScreen(subview) ? subview : 'catalog'
 
+    // Parse checkout step from hash: #/store/checkout/2
+    const parsedStep =
+      nextStoreScreen === 'checkout' && third
+        ? Number.parseInt(third, 10) || 1
+        : 1
+
+    // For product, fourth segment is not used; third is productId
+    const productId =
+      nextStoreScreen === 'product' && third ? third : null
+
     return {
       activeView: 'store',
       storeScreen: nextStoreScreen,
-      adminSubView: 'overview',
-      selectedProductId:
-        nextStoreScreen === 'product' && selectedProductId ? selectedProductId : null,
+      adminSubView: 'dashboard',
+      selectedProductId: productId,
+      checkoutStep: Math.max(1, Math.min(3, parsedStep)),
     }
   }
 
   return {
     activeView: 'store',
     storeScreen: 'catalog',
-    adminSubView: 'overview',
+    adminSubView: 'dashboard',
     selectedProductId: null,
+    checkoutStep: 1,
   }
 }
 
@@ -66,6 +84,10 @@ export function buildRouteHash(route: RouteState) {
 
   if (route.storeScreen === 'product' && route.selectedProductId) {
     return `#/store/product/${route.selectedProductId}`
+  }
+
+  if (route.storeScreen === 'checkout') {
+    return `#/store/checkout/${route.checkoutStep}`
   }
 
   return `#/store/${route.storeScreen}`
@@ -80,21 +102,15 @@ export function isStoreScreen(value?: string): value is StoreScreen {
     value === 'cart' ||
     value === 'checkout' ||
     value === 'success' ||
-    value === 'rewards'
+    value === 'rewards' ||    value === 'polls' ||
+    value === 'privacy' ||
+    value === 'terms' ||
+    value === 'about'
   )
 }
 
 export function isAdminSubview(value?: string): value is AdminSubView {
-  return (
-    value === 'overview' ||
-    value === 'products' ||
-    value === 'promos' ||
-    value === 'orders' ||
-    value === 'broadcasts' ||
-    value === 'campaigns' ||
-    value === 'rewards' ||
-    value === 'dashboard'
-  )
+  return value === 'dashboard' || value === 'catalog' || value === 'growth' || value === 'orders' || value === 'rewards'
 }
 
 

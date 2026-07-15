@@ -206,6 +206,80 @@ If documentation becomes outdated, update it to match the current implementation
 
 ---
 
+## Security & Compliance
+
+Key security, privacy, and compliance documents:
+
+- [`SECURITY_PLAN.md`](./SECURITY_PLAN.md) — Architecture, verification model, and implementation phases for securing the app
+- [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) — **Pre-release human checklist** for security, accessibility, IP, and privacy review
+- [`FIREBASE_SCHEMA.md`](./FIREBASE_SCHEMA.md) — Firestore collection shapes and security rule summaries
+- [`firestore.rules`](./firestore.rules) — Firestore security rule definitions
+- [`storage.rules`](./storage.rules) — Cloud Storage security rule definitions
+
+Key security practices:
+- All Firebase config values are read from environment variables (`VITE_FIREBASE_*`), never hardcoded
+- Telegram `initData` is verified server-side via HMAC-SHA256
+- All secrets (bot tokens, API keys) are managed via environment variables or Firebase Secrets, never committed to the repository
+- `.env` is in `.gitignore`
+- Sensitive Firestore collections (`orders`, `userRewards`, `pollVotes`, `telegramSubscribers`, `userConsent`, `userSettings`, `presence`) have client read/write denied
+- Admin operations are performed through Cloud Functions with backend-verified admin identity
+
+### Pre-release checklist
+
+Before every public release, run through the checklist in [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md):
+1. Run OWASP ZAP or similar DAST tool on the deployed app
+2. Run SonarQube or similar SAST tool on the codebase
+3. Run Lighthouse + axe DevTools on all main pages (no critical/serious WCAG violations)
+4. Manually test keyboard navigation and screen reader compatibility
+5. Verify all secrets are in environment variables, not in source code
+6. Review Firestore and Storage rules for any overly permissive access
+7. Perform full manual end-to-end test of all critical flows
+
+---
+
+## Assets & Licensing
+
+### Icons
+- UI icons are from **Heroicons** (MIT license) and **Lucide** (ISC license)
+- SVG icons are inline in the source code — no external icon CDN dependencies
+
+### Fonts
+- The app uses the system font stack — no custom fonts are loaded
+- Font stack: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif
+
+### Images
+- All product images are original photos of the seller's personal items
+- Campaign/giveaway images are uploaded by the admin via the admin panel
+- No placeholder images from free stock photo services (Unsplash, Pexels, etc.) are used in production code
+
+### Text content
+- All product descriptions, campaign text, and UI copy are written for this project
+- No copy is copied from external brands or websites
+
+### Third-party services
+- **Firebase** (Google Cloud) — data processor for user data. See [Google Cloud DPA](https://cloud.google.com/terms/data-processing-addendum)
+- **Telegram** — platform provider. The app runs inside Telegram Mini App environment
+
+---
+
+## Accessibility (a11y)
+
+The app is built with mobile-first, accessible design:
+- All interactive elements use native `<button>` and `<a>` elements or have proper `role`, `tabIndex`, and keyboard handlers
+- Modal panels close on `Escape` key press
+- All meaningful images have descriptive `alt` text
+- The app respects `prefers-reduced-motion`
+- Color contrast meets WCAG AA standards where possible
+
+### Accessibility testing
+Before release:
+1. Run **Lighthouse** on all main pages — target: no critical/serious violations
+2. Run **axe DevTools** browser extension on the same pages
+3. Manually test with keyboard navigation (Tab, Enter, Escape)
+4. Test with screen reader (VoiceOver / NVDA)
+
+---
+
 ## Working principles
 
 When contributing:

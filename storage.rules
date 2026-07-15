@@ -6,6 +6,11 @@ service firebase.storage {
       allow create, update, delete: if false;
     }
 
+    match /banners/{allPaths=**} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

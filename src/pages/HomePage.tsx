@@ -1,4 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import { useOnlineUsers } from '../hooks/useOnlineUsers'
 
 import { AppShell } from '../components/layout/AppShell'
 import { AdminDashboard } from '../components/admin/AdminDashboard'
@@ -11,6 +13,11 @@ import { useCheckout } from '../hooks/useCheckout'
 import { useLikes } from '../hooks/useLikes'
 import { useProducts } from '../hooks/useProducts'
 import { usePromo } from '../hooks/usePromo'
+import { useStoreNavigation } from '../hooks/useStoreNavigation'
+import { useProductFiltering } from '../hooks/useProductFiltering'
+import { useNetworkStatus } from '../hooks/useNetworkStatus'
+import { OfflineBanner } from '../components/ui/OfflineBanner'
+import { PageHeader } from '../components/ui/PageHeader'
 import {
   readStoredSessionJson,
   writeStoredSessionJson,
@@ -20,23 +27,19 @@ import {
   canUseBrowserAdminFallback,
   verifyTelegramAdminAccess,
 } from '../lib/telegram/admin'
-import {
-  buildRouteHash,
-  readRouteFromHash,
-} from '../lib/storeRoute'
-import { getTelegramWebAppState } from '../lib/telegram/webApp'
-import {
-  listBannerSlides,
-} from '../lib/firebase/bannerSlides'
+import { readRouteFromHash } from '../lib/storeRoute'
+import { getTelegramWebAppState, triggerHapticNotification } from '../lib/telegram/webApp'
+import { useTelegramBackButton } from '../hooks/useTelegramBackButton'
+import { listCampaigns } from '../lib/firebase/campaigns'
 import { fetchAdminAnalytics } from '../lib/firebase/analytics'
-import type {
-  AnalyticsResult,
-} from '../lib/firebase/analytics'
-import type {
-  CheckoutSuccessSnapshot,
-} from '../types/cart'
-import type { BannerSlide } from '../types/bannerSlide'
-import type { Product, ProductCategory } from '../types/product'
+import { checkTermsAccepted, withdrawConsent } from '../lib/firebase/consent'
+import { ConsentScreen } from '../components/legal/ConsentScreen'
+import { PrivacyPolicy } from '../components/legal/PrivacyPolicy'
+import { TermsOfService } from '../components/legal/TermsOfService'
+import { AboutPage } from '../components/legal/AboutPage'
+import type { AnalyticsResult } from '../lib/firebase/analytics'
+import type { CheckoutSuccessSnapshot } from '../types/cart'
+import type { Campaign } from '../types/campaign'
 
 const ProductDetailPanel = lazy(async () => {
   const module = await import('../components/product/ProductDetailPanel')
@@ -57,6 +60,12 @@ const RewardsTasksPanel = lazy(async () => {
   const module = await import('../components/rewards/RewardsTasksPanel')
   return { default: module.RewardsTasksPanel }
 })
+
+const BuyerPollPanel = lazy(async () => {
+  const module = await import('../components/poll/BuyerPollPanel')
+  return { default: module.BuyerPollPanel }
+})
+
 const CHECKOUT_SUCCESS_STORAGE_KEY = 'yungwear-checkout-success'
 
 type PersistedCheckoutSuccessState = {
@@ -65,84 +74,139 @@ type PersistedCheckoutSuccessState = {
 }
 
 export function HomePage() {
-  const initialRoute = readRouteFromHash()
-  const initialCheckoutSuccessState = readStoredSessionJson<PersistedCheckoutSuccessState>(
-    CHECKOUT_SUCCESS_STORAGE_KEY,
-    {
-      orderId: null,
-      snapshot: null,
-    },
-  )
-  const initialStoreScreen =
-    initialRoute.storeScreen === 'success'
-      ? initialCheckoutSuccessState.snapshot
-        ? 'success'
-        : 'cart'
-      : initialRoute.storeScreen
   const { initData, isTelegram, user } = getTelegramWebAppState()
   const { products, isLoading, errorMessage, reloadProducts } = useProducts()
   const hasTelegramBuyerAccess = Boolean(isTelegram && initData && user)
-  const [activeView, setActiveView] = useState<'store' | 'admin'>(initialRoute.activeView)
-  const [storeScreen, setStoreScreen] = useState<
-    'catalog' | 'product' | 'likes' | 'orders' | 'cart' | 'checkout' | 'success' | 'rewards'
-  >(initialStoreScreen)
-  const [adminSubView, setAdminSubView] = useState<
-    | 'overview'
-    | 'products'
-    | 'promos'
-    | 'orders'
-    | 'broadcasts'
-    | 'campaigns'
-    | 'rewards'
-    | 'dashboard'
-  >(initialRoute.adminSubView)
-  const [storeCollectionView, setStoreCollectionView] = useState<'all' | 'liked'>('all')
-  const [storeSortMode, setStoreSortMode] = useState<'latest' | 'trending'>('latest')
-  const [storeSearchQuery, setStoreSearchQuery] = useState('')
-  const [telegramGateMessage, setTelegramGateMessage] = useState<string | null>(null)
-  const [selectedCategory, setSelectedCategory] = useState<'all' | ProductCategory>('all')
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(
-    initialRoute.selectedProductId,
-  )
-  const [isAdminAccessLoading, setIsAdminAccessLoading] = useState(
-    initialRoute.activeView === 'admin',
-  )
-  const [canManageProducts, setCanManageProducts] = useState(
-    !user ? canUseBrowserAdminFallback() : false,
-  )
-  const [bannerSlides, setBannerSlides] = useState<BannerSlide[]>([])
-  const [analytics, setAnalytics] = useState<AnalyticsResult | null>(null)
-  const [notification, setNotification] = useState<string | null>(null)
-  const [promoCodeRaw, setPromoCodeRaw] = useState('')
 
-  const categoryOptions = useMemo(() => {
-    const categories = new Set<ProductCategory>()
+  // ── Derived sets from products (no hook dependencies) ──
 
-    products.forEach((product) => {
-      categories.add(product.category)
-    })
-
-    return ['all', ...categories] as Array<'all' | ProductCategory>
-  }, [products])
-  const productIdSet = useMemo(() => new Set(products.map((product) => product.id)), [products])
+  const productIdSet = useMemo(() => new Set(products.map((p) => p.id)), [products])
   const availableProductIdSet = useMemo(
-    () => new Set(products.filter((product) => product.isAvailable).map((product) => product.id)),
+    () => new Set(products.filter((p) => p.isAvailable).map((p) => p.id)),
     [products],
   )
 
-  // --- Hooks ---
+  // ── Navigation state (self-contained, no cross-hook deps) ──
 
-  function requireTelegramAccess(actionLabel: string) {
-    if (hasTelegramBuyerAccess) {
-      return true
+  const nav = useStoreNavigation(hasTelegramBuyerAccess)
+
+  // ── Network status (offline detection) ──
+  const { isOnline, wasOffline, clearWasOffline } = useNetworkStatus()
+
+  const [notification, setNotification] = useState<string | null>(null)
+
+  // ── Consent state (GDPR) ──
+  const [showConsent, setShowConsent] = useState<boolean | null>(null) // null = loading
+
+  // Check if user has accepted terms on mount
+  useEffect(() => {
+    if (!initData) {
+      setShowConsent(false)
+      return
     }
 
-    setTelegramGateMessage(
-      `${actionLabel} is available only inside the Telegram Mini App with a real Telegram session. Open the app in Telegram to continue with real likes, cart, and checkout.`,
-    )
+    // Check local storage first for fast path
+    const locallyAccepted = (() => {
+      try { return localStorage.getItem('yungwear-consent-accepted') } catch { return null }
+    })()
+    if (locallyAccepted === 'true') {
+      setShowConsent(false)
+      return
+    }
 
-    return false
-  }
+    let cancelled = false
+    async function checkConsent() {
+      try {
+        const accepted = await checkTermsAccepted(initData)
+        if (!cancelled) {
+          if (accepted) {
+            // Cache locally so we don't check on every load
+            try {
+              localStorage.setItem('yungwear-consent-accepted', 'true')
+            } catch { /* ignore */ }
+            setShowConsent(false)
+          } else {
+            setShowConsent(true)
+          }
+        }
+      } catch {
+        if (!cancelled) setShowConsent(false) // Fail open to not block users
+      }
+    }
+
+    void checkConsent()
+    return () => { cancelled = true }
+  }, [initData])
+
+  const handleConsentAccepted = useCallback(() => {
+    try {
+      localStorage.setItem('yungwear-consent-accepted', 'true')
+    } catch { /* ignore */ }
+    setShowConsent(false)
+  }, [])
+
+  const handleWithdrawConsent = useCallback(async () => {
+    if (!initData) return
+    const result = await withdrawConsent(initData)
+    if (result.ok) {
+      // Clear local cache so consent screen shows again on next load
+      try {
+        localStorage.removeItem('yungwear-consent-accepted')
+      } catch { /* ignore */ }
+      triggerHapticNotification('error')
+      setShowConsent(true) // Show consent screen again
+    }
+  }, [initData])
+
+  // ── Viewport state (Telegram keyboard handling) ──
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false)
+
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp
+    if (!tg) return
+
+    const handleViewportChange = (event?: Record<string, unknown>) => {
+      const height = typeof event?.height === 'number' ? event.height : window.innerHeight
+      // When keyboard opens, viewport shrinks significantly
+      setIsKeyboardOpen(height < window.screen.height * 0.8)
+    }
+
+    tg.onEvent('viewportChanged', handleViewportChange)
+    return () => tg.offEvent('viewportChanged', handleViewportChange)
+  }, [])
+
+  // ── Telegram native BackButton ──
+  const isBackButtonVisible =
+    nav.activeView === 'store' &&
+    nav.storeScreen !== 'catalog'
+
+  const handleBackButton = useCallback(() => {
+    switch (nav.storeScreen) {
+      case 'product':
+        nav.handleBackFromProduct()
+        break
+      case 'cart':
+      case 'likes':
+      case 'orders':
+      case 'rewards':
+      case 'polls':
+      case 'privacy':
+      case 'terms':
+      case 'about':
+        nav.handleOpenCatalog()
+        break
+      case 'success':
+      case 'checkout':
+        nav.setStoreScreen('cart')
+        break
+      default:
+        break
+    }
+  }, [nav])
+
+  useTelegramBackButton(isBackButtonVisible, handleBackButton)
+
+  // ── Cart & likes (need requireTelegramAccess + productIdSet) ──
 
   const {
     cartItems,
@@ -153,23 +217,28 @@ export function HomePage() {
     handleRemoveFromCart,
     clearCart,
   } = useCart({
-    requireTelegramAccess,
+    requireTelegramAccess: nav.requireTelegramAccess,
     productIdSet,
     availableProductIdSet,
+    initData,
     onError: setNotification,
   })
 
   const {
     likedProductIds,
     likedProductIdSet,
-    validLikedProductIds,
     likedCount,
+    hasUnreadLikes,
+    clearUnreadLikes,
     handleToggleLike,
   } = useLikes({
-    requireTelegramAccess,
+    requireTelegramAccess: nav.requireTelegramAccess,
     productIdSet,
+    initData,
     onError: setNotification,
   })
+
+  // ── Promo (needs checkoutSubtotal + promoCodeRaw) ──
 
   const {
     appliedPromo,
@@ -181,8 +250,22 @@ export function HomePage() {
     clearPromo,
   } = usePromo({
     checkoutSubtotal,
-    promoCodeRaw,
+    promoCodeRaw: nav.promoCodeRaw,
   })
+
+  // ── Checkout initial state detection ──
+
+  const initialRoute = readRouteFromHash()
+  const initialCheckoutSuccessState =
+    readStoredSessionJson<PersistedCheckoutSuccessState>(
+      CHECKOUT_SUCCESS_STORAGE_KEY,
+      { orderId: null, snapshot: null },
+    )
+  const hadPendingCheckoutSuccess =
+    initialRoute.storeScreen === 'success' &&
+    Boolean(initialCheckoutSuccessState.snapshot)
+
+  // ── Checkout (needs most other state) ──
 
   const {
     checkoutForm,
@@ -200,7 +283,7 @@ export function HomePage() {
   } = useCheckout({
     user,
     initData,
-    requireTelegramAccess,
+    requireTelegramAccess: nav.requireTelegramAccess,
     cartItems,
     checkoutSubtotal,
     appliedPromo,
@@ -209,196 +292,52 @@ export function HomePage() {
     clearCart,
     clearPromo,
     reloadProducts,
-    onNavigateToCheckout: () => setStoreScreen('checkout'),
-    onCheckoutSuccess: () => setStoreScreen('success'),
-    onPromoCodeChange: setPromoCodeRaw,
-    initialCheckoutSubmitted: initialStoreScreen === 'success' && Boolean(initialCheckoutSuccessState.snapshot),
+    onNavigateToCheckout: () => nav.setStoreScreen('checkout'),
+    onCheckoutSuccess: () => nav.setStoreScreen('success'),
+    onPromoCodeChange: nav.setPromoCodeRaw,
+    initialCheckoutSubmitted: hadPendingCheckoutSuccess,
     initialOrderId: initialCheckoutSuccessState.orderId,
     initialSuccessSnapshot: initialCheckoutSuccessState.snapshot,
   })
 
-  // --- Derived state ---
+  // ── Product filtering derived state (needs cart + likes + nav) ──
 
-  const filteredProducts = useMemo(() => {
-    const normalizedQuery = storeSearchQuery.trim().toLowerCase()
-    const nextProducts =
-      storeCollectionView === 'liked'
-        ? products.filter((product) => likedProductIdSet.has(product.id))
-        : products
+  const filtering = useProductFiltering({
+    products,
+    likedProductIdSet,
+    likedProductIds,
+    storeCollectionView: nav.storeCollectionView,
+    storeSearchQuery: nav.storeSearchQuery,
+    selectedCategory: nav.selectedCategory,
+    storeSortMode: nav.storeSortMode,
+    selectedProductId: nav.selectedProductId,
+    cartItems,
+  })
 
-    const categoryFilteredProducts =
-      selectedCategory === 'all'
-        ? nextProducts
-        : nextProducts.filter((product) => product.category === selectedCategory)
+  // ── Side-effects with cross-hook dependencies ──
 
-    if (!normalizedQuery) {
-      return categoryFilteredProducts
-    }
+  // Destructure stable setters from nav to avoid re-running effects when nav object changes
+  const {
+    setActiveView: navSetActiveView,
+    setStoreScreen: navSetStoreScreen,
+    setAdminSubView: navSetAdminSubView,
+    setSelectedProductId: navSetSelectedProductId,
+    storeScreen: navStoreScreen,
+  } = nav
 
-    return categoryFilteredProducts.filter((product) => {
-      const searchBody = [
-        product.name,
-        product.category,
-        ...product.brandNames,
-      ]
-        .join(' ')
-        .toLowerCase()
-
-      return searchBody.includes(normalizedQuery)
-    })
-  }, [likedProductIdSet, products, selectedCategory, storeCollectionView, storeSearchQuery])
-  const sortedProducts = useMemo(() => {
-    const nextProducts = [...filteredProducts]
-
-    nextProducts.sort((leftProduct, rightProduct) => {
-      if (storeSortMode === 'trending') {
-        const scoreDifference =
-          getProductHeatScore(rightProduct) - getProductHeatScore(leftProduct)
-
-        if (scoreDifference !== 0) {
-          return scoreDifference
-        }
-      }
-
-      const leftTime = leftProduct.createdAt?.toMillis() ?? 0
-      const rightTime = rightProduct.createdAt?.toMillis() ?? 0
-
-      return rightTime - leftTime
-    })
-
-    return nextProducts
-  }, [filteredProducts, storeSortMode])
-  const selectedProduct = useMemo(() => {
-    const matchedProduct = selectedProductId
-      ? sortedProducts.find((product) => product.id === selectedProductId) ?? null
-      : null
-
-    return matchedProduct ?? sortedProducts[0] ?? null
-  }, [selectedProductId, sortedProducts])
-  const isSelectedProductInCart = useMemo(() => {
-    if (!selectedProduct) {
-      return false
-    }
-
-    return cartItems.some((item) => item.productId === selectedProduct.id)
-  }, [cartItems, selectedProduct])
-  const isSelectedProductLiked = useMemo(() => {
-    if (!selectedProduct) {
-      return false
-    }
-
-    return likedProductIds.includes(selectedProduct.id)
-  }, [likedProductIds, selectedProduct])
-  // Load banner slides for the hero carousel
-  useEffect(() => {
-    let isCancelled = false
-
-    async function loadBannerSlides() {
-      try {
-        const slides = await listBannerSlides(20)
-        if (!isCancelled) {
-          setBannerSlides(slides)
-        }
-      } catch {
-        // Silently fall back to hardcoded carousel slides
-      }
-    }
-
-    void loadBannerSlides()
-
-    return () => {
-      isCancelled = true
-    }
-  }, [])
-
-  // Fetch analytics when admin view is active
-  useEffect(() => {
-    if (activeView !== 'admin' || !canManageProducts || !initData) {
-      return
-    }
-
-    let isCancelled = false
-
-    async function loadAnalytics() {
-      try {
-        const data = await fetchAdminAnalytics(initData)
-        if (!isCancelled) setAnalytics(data)
-      } catch {
-        // Fall back to local defaults
-      }
-    }
-
-    void loadAnalytics()
-
-    return () => { isCancelled = true }
-  }, [activeView, canManageProducts, initData])
-
-  // --- Effects ---
-
+  // Persist checkout success
   useEffect(() => {
     if (!checkoutSuccessSnapshot) {
       removeStoredSessionValue(CHECKOUT_SUCCESS_STORAGE_KEY)
       return
     }
-
     writeStoredSessionJson(CHECKOUT_SUCCESS_STORAGE_KEY, {
       orderId: createdOrderId,
       snapshot: checkoutSuccessSnapshot,
     })
   }, [checkoutSuccessSnapshot, createdOrderId])
 
-  useEffect(() => {
-    let isCancelled = false
-
-    async function resolveAdminAccess() {
-      if (!user) {
-        const browserFallbackEnabled = canUseBrowserAdminFallback()
-
-        if (!isCancelled) {
-          setCanManageProducts(browserFallbackEnabled)
-          setIsAdminAccessLoading(false)
-        }
-
-        return
-      }
-
-      if (!isTelegram || !initData) {
-        if (!isCancelled) {
-          setCanManageProducts(false)
-          setIsAdminAccessLoading(false)
-        }
-
-        return
-      }
-
-      if (!isCancelled) {
-        setIsAdminAccessLoading(true)
-      }
-
-      try {
-        const verificationResult = await verifyTelegramAdminAccess(initData, user)
-
-        if (!isCancelled) {
-          setCanManageProducts(verificationResult.mode === 'telegram_verified')
-        }
-      } catch {
-        if (!isCancelled) {
-          setCanManageProducts(false)
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsAdminAccessLoading(false)
-        }
-      }
-    }
-
-    void resolveAdminAccess()
-
-    return () => {
-      isCancelled = true
-    }
-  }, [initData, isTelegram, user])
-
+  // Listen for hash changes (forward/back navigation)
   useEffect(() => {
     function handleHashChange() {
       const nextRoute = readRouteFromHash()
@@ -407,344 +346,401 @@ export function HomePage() {
           ? 'cart'
           : nextRoute.storeScreen
 
-      setActiveView(nextRoute.activeView)
-      setStoreScreen(nextStoreScreen)
-      setAdminSubView(nextRoute.adminSubView)
-      setSelectedProductId(nextRoute.selectedProductId)
+      navSetActiveView(nextRoute.activeView)
+      navSetStoreScreen(nextStoreScreen)
+      navSetAdminSubView(nextRoute.adminSubView)
+      navSetSelectedProductId(nextRoute.selectedProductId)
+      nav.setCheckoutStep(nextRoute.checkoutStep)
     }
 
     window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [checkoutSuccessSnapshot, navSetActiveView, navSetStoreScreen, navSetAdminSubView, navSetSelectedProductId])
 
-    return () => {
-      window.removeEventListener('hashchange', handleHashChange)
-    }
-  }, [checkoutSuccessSnapshot])
-
+  // Sync selected product when current one is deleted
   useEffect(() => {
-    const nextHash = buildRouteHash({
-      activeView,
-      storeScreen,
-      adminSubView,
-      selectedProductId,
-    })
-
-    if (window.location.hash !== nextHash) {
-      window.location.hash = nextHash
-    }
-  }, [activeView, adminSubView, selectedProductId, storeScreen])
-
-  // Sync selected product if the current one was deleted
-  useEffect(() => {
-    if (productIdSet.size === 0) {
-      return
-    }
-
-    setSelectedProductId((currentProductId) =>
-      currentProductId && productIdSet.has(currentProductId) ? currentProductId : null,
+    if (filtering.productIdSet.size === 0) return
+    navSetSelectedProductId((current) =>
+      current && filtering.productIdSet.has(current) ? current : null,
     )
-  }, [productIdSet])
+  }, [filtering.productIdSet, navSetSelectedProductId])
 
-  // Navigate back to cart if unavailable items were removed during checkout
+  // Redirect restricted screens outside Telegram
   useEffect(() => {
-    if (unavailableCartProductIds.length > 0 && storeScreen === 'checkout') {
-      setStoreScreen('cart')
+    if (hasTelegramBuyerAccess) return
+
+    if (
+      navStoreScreen === 'likes' ||
+      navStoreScreen === 'orders' ||
+      navStoreScreen === 'cart' ||
+      navStoreScreen === 'checkout' ||
+      navStoreScreen === 'success' ||
+      navStoreScreen === 'rewards' ||
+      navStoreScreen === 'polls'
+    ) {
+      navSetStoreScreen('catalog')
     }
-  }, [storeScreen, unavailableCartProductIds])
+  }, [hasTelegramBuyerAccess, navStoreScreen, navSetStoreScreen])
 
-  // Clear checkout error only when a promo transitions from not-applied to applied
+  // Redirect away from store screens when consent is revoked
+  useEffect(() => {
+    if (showConsent !== true) return
+
+    if (
+      navStoreScreen !== 'privacy' &&
+      navStoreScreen !== 'terms' &&
+      navStoreScreen !== 'about'
+    ) {
+      navSetStoreScreen('privacy')
+    }
+  }, [showConsent, navStoreScreen, navSetStoreScreen])
+
+  // Legal screens are always accessible (even without Telegram)
+  // No redirect needed for privacy/terms/about
+
+  // Navigate back to cart if unavailable items removed during checkout
+  useEffect(() => {
+    if (unavailableCartProductIds.length > 0 && navStoreScreen === 'checkout') {
+      navSetStoreScreen('cart')
+    }
+  }, [navStoreScreen, unavailableCartProductIds, navSetStoreScreen])
+
+  // ── Modal state tracking for bottom nav auto-hide ──
+  const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // ── Admin-only effects ──
+
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [analytics, setAnalytics] = useState<AnalyticsResult | null>(null)
+  const [isAdminAccessLoading, setIsAdminAccessLoading] = useState(
+    initialRoute.activeView === 'admin',
+  )
+  const [canManageProducts, setCanManageProducts] = useState(
+    !user ? canUseBrowserAdminFallback() : false,
+  )
+  // Load campaigns for hero carousel
+  useEffect(() => {
+    let isCancelled = false
+    async function loadCampaignSlides() {
+      try {
+        const data = await listCampaigns(20)
+        if (!isCancelled) setCampaigns(data)
+      } catch {
+        // Silently fall back to hardcoded carousel slides
+      }
+    }
+    void loadCampaignSlides()
+    return () => { isCancelled = true }
+  }, [])
+
+  // Fetch analytics when admin view is active
+  useEffect(() => {
+    if (nav.activeView !== 'admin' || !canManageProducts || !initData) return
+
+    let isCancelled = false
+    async function loadAnalytics() {
+      try {
+        const data = await fetchAdminAnalytics(initData)
+        if (!isCancelled) setAnalytics(data)
+      } catch {
+        // Fall back to local defaults
+      }
+    }
+    void loadAnalytics()
+    return () => { isCancelled = true }
+  }, [nav.activeView, canManageProducts, initData])
+
+  // Resolve admin access
+  useEffect(() => {
+    let isCancelled = false
+    async function resolveAdminAccess() {
+      if (!user) {
+        if (!isCancelled) {
+          setCanManageProducts(canUseBrowserAdminFallback())
+          setIsAdminAccessLoading(false)
+        }
+        return
+      }
+
+      if (!isTelegram || !initData) {
+        if (!isCancelled) {
+          setCanManageProducts(false)
+          setIsAdminAccessLoading(false)
+        }
+        return
+      }
+
+      if (!isCancelled) setIsAdminAccessLoading(true)
+
+      try {
+        const result = await verifyTelegramAdminAccess(initData, user)
+        if (!isCancelled) {
+          setCanManageProducts(result.mode === 'telegram_verified')
+        }
+      } catch {
+        if (!isCancelled) setCanManageProducts(false)
+      } finally {
+        if (!isCancelled) setIsAdminAccessLoading(false)
+      }
+    }
+
+    void resolveAdminAccess()
+    return () => { isCancelled = true }
+  }, [initData, isTelegram, user])
+
+  // Clear checkout error when promo applies
   const prevAppliedPromoRef = useRef(appliedPromo)
-
   useEffect(() => {
     if (prevAppliedPromoRef.current === null && appliedPromo !== null && checkoutError) {
       setCheckoutError(null)
     }
-
     prevAppliedPromoRef.current = appliedPromo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedPromo])
 
-  // Redirect restricted screens to catalog when accessed outside Telegram
-  useEffect(() => {
-    if (hasTelegramBuyerAccess) {
-      return
-    }
+  // ── Render ──
 
-    if (
-      storeScreen === 'likes' ||
-      storeScreen === 'orders' ||
-      storeScreen === 'cart' ||
-      storeScreen === 'checkout' ||
-      storeScreen === 'success' ||
-      storeScreen === 'rewards'
-    ) {
-      setStoreScreen('catalog')
-    }
-  }, [hasTelegramBuyerAccess, storeScreen])
-
-  // Smooth-scroll to top when navigating to the catalog, likes, or rewards view
-  useEffect(() => {
-    if (storeScreen === 'catalog' || storeScreen === 'likes' || storeScreen === 'rewards') {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    }
-  }, [storeScreen])
-
-  // --- Event handlers ---
-
-  function handleOpenCatalog() {
-    setStoreScreen('catalog')
-    setStoreCollectionView('all')
-  }
-
-  function handleResetCatalogFilters() {
-    setStoreSearchQuery('')
-    setSelectedCategory('all')
-    setStoreCollectionView('all')
-    setStoreSortMode('latest')
-    setStoreScreen('catalog')
-  }
-
-  function handleOpenMyOrders() {
-    if (!requireTelegramAccess('Order history')) {
-      return
-    }
-
-    setStoreScreen('orders')
-  }
-
-  function handleOpenLikes() {
-    if (!requireTelegramAccess('Saved likes')) {
-      return
-    }
-
-    setStoreCollectionView('liked')
-    setStoreScreen('likes')
-  }
-
-  function handleOpenProduct(productId: string) {
-    setSelectedProductId(productId)
-    setStoreScreen('product')
-  }
-
-  function handleOpenCart() {
-    if (!requireTelegramAccess('Cart')) {
-      return
-    }
-
-    setStoreScreen('cart')
-  }
-
-  function handleOpenRewards() {
-    if (!requireTelegramAccess('Rewards')) {
-      return
-    }
-
-    setStoreScreen('rewards')
-  }
-
-return (
-  <AppShell
-    title="YUNGWEAR"
-    bottomNavVisible={activeView === 'store' && storeScreen !== 'checkout' && storeScreen !== 'success'}
-    storeScreen={storeScreen}
-    likedCount={likedCount}
-    cartCount={cartCount}
-    onOpenCatalog={handleOpenCatalog}
-    onOpenLikes={handleOpenLikes}
-    onOpenOrders={handleOpenMyOrders}
-    onOpenCart={handleOpenCart}
-    onOpenRewards={handleOpenRewards}
-    onTripleTap={() => {
-      if (activeView === 'admin') {
-        setActiveView('store')
-        setStoreScreen('catalog')
-      } else {
-        setActiveView('admin')
-        setAdminSubView('overview')
+  return (      <AppShell
+      title="YUNGWEAR"
+      showConsent={showConsent}
+      bottomNavVisible={
+        nav.activeView === 'store' &&
+        nav.storeScreen !== 'checkout' &&
+        nav.storeScreen !== 'success' &&
+        nav.storeScreen !== 'privacy' &&
+        nav.storeScreen !== 'terms' &&
+        nav.storeScreen !== 'about'
       }
-    }}
-  >
-    <section className="space-y-4">
-
-      {notification && (
-        <NotificationBanner
-          message={notification}
-          onClose={() => setNotification(null)}
-        />
-      )}
-
-      {/* Store view */}
-      {activeView === 'store' ? (
-        <>
-          <StoreControlsPanel
-            telegramGateMessage={telegramGateMessage}
-            telegramBotLink={buildTelegramBotLink()}
-            onCloseGate={() => setTelegramGateMessage(null)}
+      onlineUsersCount={useOnlineUsers(user?.id)}
+      isModalOpen={isModalOpen}
+      storeScreen={nav.storeScreen}
+      likedCount={likedCount}
+      cartCount={cartCount}
+      onOpenCatalog={nav.handleOpenCatalog}
+      onOpenLikes={() => {
+        clearUnreadLikes()
+        nav.handleOpenLikes()
+      }}
+      onOpenOrders={nav.handleOpenMyOrders}
+      onOpenCart={nav.handleOpenCart}
+      onOpenRewards={nav.handleOpenRewards}
+      onOpenPrivacy={() => nav.setStoreScreen('privacy')}
+      onOpenTerms={() => nav.setStoreScreen('terms')}
+      onOpenAbout={() => nav.setStoreScreen('about')}
+      onTripleTap={nav.handleTripleTap}
+      onWithdrawConsent={handleWithdrawConsent}
+      hasUnreadLikes={hasUnreadLikes}
+    >
+      <section className={`space-y-4 ${isKeyboardOpen ? 'pb-24' : ''}`}>
+        {/* GDPR consent screen */}
+        {showConsent === true && (
+          <ConsentScreen
+            initData={initData}
+            onAccepted={handleConsentAccepted}
+            onOpenPrivacy={() => nav.setStoreScreen('privacy')}
+            onOpenTerms={() => nav.setStoreScreen('terms')}
           />
+        )}
 
-          {(storeScreen === 'catalog' || storeScreen === 'likes') ? (
-            <StoreCatalogPanel
-              storeScreen={storeScreen}
-              isLoading={isLoading}
-              errorMessage={errorMessage}
-              products={products}
-              sortedProducts={sortedProducts}
-              selectedProductId={selectedProduct?.id ?? null}
-              validLikedProductIds={validLikedProductIds}
-              likedProductIds={likedProductIds}
-              categoryOptions={categoryOptions}
-              selectedCategory={selectedCategory}
-              storeCollectionView={storeCollectionView}
-              storeSortMode={storeSortMode}
-              storeSearchQuery={storeSearchQuery}
-              onSearchChange={setStoreSearchQuery}
-              onSelectCollectionView={(view) => {
-                setStoreCollectionView(view)
-                setStoreScreen(view === 'liked' ? 'likes' : 'catalog')
-              }}
-              onSelectSortMode={setStoreSortMode}
-              onSelectCategory={setSelectedCategory}
-              onResetFilters={handleResetCatalogFilters}
-              onOpenLikes={handleOpenLikes}
-              onOpenProduct={handleOpenProduct}
-              onOpenLikedProduct={(productId) => {
-                setStoreCollectionView('liked')
-                handleOpenProduct(productId)
-              }}
-              onRefresh={reloadProducts}
-              onToggleLike={handleToggleLike}
-              bannerSlides={bannerSlides}
+        {/* Offline / reconnected banner */}
+        <OfflineBanner
+          isOnline={isOnline}
+          wasOffline={wasOffline}
+          onDismiss={clearWasOffline}
+        />
+
+        {notification && (
+          <NotificationBanner
+            message={notification}
+            onClose={() => setNotification(null)}
+          />
+        )}
+
+        {/* Store view */}
+        {nav.activeView === 'store' ? (
+          <>
+            <StoreControlsPanel
+              telegramGateMessage={nav.telegramGateMessage}
+              telegramBotLink={buildTelegramBotLink()}
+              onCloseGate={() => nav.setTelegramGateMessage(null)}
             />
-          ) : null}
 
-          {storeScreen === 'product' ? (
-            selectedProduct ? (
+            {nav.storeScreen === 'catalog' || nav.storeScreen === 'likes' ? (
+              <StoreCatalogPanel
+                storeScreen={nav.storeScreen}
+                isLoading={isLoading}
+                errorMessage={errorMessage}
+                products={products}
+                sortedProducts={filtering.sortedProducts}
+                likedProductIds={likedProductIds}
+                categoryOptions={filtering.categoryOptions}
+                selectedCategory={nav.selectedCategory}
+                storeCollectionView={nav.storeCollectionView}
+                storeSortMode={nav.storeSortMode}
+                storeSearchQuery={nav.storeSearchQuery}
+                onSearchChange={nav.setStoreSearchQuery}
+                onSelectCollectionView={nav.handleSelectCollectionView}
+                onSelectSortMode={nav.setStoreSortMode}
+                onSelectCategory={nav.setSelectedCategory}
+                onResetFilters={nav.handleResetCatalogFilters}
+                onOpenProduct={nav.handleOpenProduct}
+                onRefresh={reloadProducts}
+                onToggleLike={handleToggleLike}
+                onAddToCart={handleAddToCart}
+                onRemoveFromCart={handleRemoveFromCart}
+                cartItems={cartItems}
+                initData={initData}
+                campaigns={campaigns}
+                onQuickViewChange={setIsModalOpen}
+              />
+            ) : null}
+
+            {nav.storeScreen === 'product' ? (
+              filtering.selectedProduct ? (
+                <>
+                  <PageHeader
+                    label={nav.storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
+                    onClick={nav.handleBackFromProduct}
+                  />
+                  <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
+                    <ProductDetailPanel
+                      key={filtering.selectedProduct.id}
+                      product={filtering.selectedProduct}
+                      isInCart={filtering.isSelectedProductInCart}
+                      isLiked={filtering.isSelectedProductLiked}
+                      onAddToCart={handleAddToCart}
+                      onRemoveFromCart={handleRemoveFromCart}
+                      onToggleLike={handleToggleLike}
+                      initData={initData}
+                    />
+                  </Suspense>
+                </>
+              ) : (
+                <StoreEmptyState
+                  title="No Product Selected"
+                  description="Go back to the catalog and pick a piece."
+                  actionLabel="Back To Catalog"
+                  onAction={nav.handleOpenCatalog}
+                />
+              )
+            ) : null}
+
+            {nav.storeScreen === 'cart' ? (
               <>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStoreScreen(storeCollectionView === 'liked' ? 'likes' : 'catalog')
-                  }
-                  className="rounded-[24px] border border-white/10 bg-white/6 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-                >
-                  ← {storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
-                </button>
-                <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
-                  <ProductDetailPanel
-                    key={selectedProduct.id}
-                    product={selectedProduct}
-                    isInCart={isSelectedProductInCart}
-                    isLiked={isSelectedProductLiked}
-                    onAddToCart={handleAddToCart}
-                    onToggleLike={handleToggleLike}
+                <PageHeader label="Catalog" onClick={nav.handleOpenCatalog} />                  <CartPanel
+                    items={cartItems}
+                    onRemoveItem={handleRemoveFromCart}
+                    onContinueShopping={nav.handleOpenCatalog}
+                    onProceedToCheckout={handleOpenCheckout}
+                  />
+              </>
+            ) : null}
+
+            {nav.storeScreen === 'rewards' ? (
+              <Suspense fallback={<StorePanelLoadingState label="Rewards" />}>
+                <RewardsTasksPanel
+                  initData={initData}
+                  hasTelegramAccess={hasTelegramBuyerAccess}
+                  onBack={nav.handleOpenCatalog}
+                  onGiveawayDetailChange={setIsModalOpen}
+                  onOpenPolls={nav.handleOpenPolls}
+                />
+              </Suspense>
+            ) : null}
+
+            {nav.storeScreen === 'polls' ? (
+              <Suspense fallback={<StorePanelLoadingState label="Community Polls" />}>
+                <BuyerPollPanel
+                  initData={initData}
+                  hasTelegramAccess={hasTelegramBuyerAccess}
+                  onBack={nav.handleOpenCatalog}
+                />
+              </Suspense>
+            ) : null}
+
+            {nav.storeScreen === 'privacy' ? (
+              <PrivacyPolicy onBack={nav.handleOpenCatalog} />
+            ) : null}
+
+            {nav.storeScreen === 'terms' ? (
+              <TermsOfService onBack={nav.handleOpenCatalog} />
+            ) : null}
+
+            {nav.storeScreen === 'about' ? (
+              <AboutPage
+                onBack={nav.handleOpenCatalog}
+                onOpenPrivacy={() => nav.setStoreScreen('privacy')}
+                onOpenTerms={() => nav.setStoreScreen('terms')}
+              />
+            ) : null}
+
+            {nav.storeScreen === 'orders' ? (
+              <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
+                {user?.id ? (
+                  <BuyerOrdersPanel
+                    initData={initData}
+                    telegramUserId={user.id}
+                    onBack={nav.handleOpenCatalog}
+                    onOrderModalChange={setIsModalOpen}
+                  />
+                ) : null}
+              </Suspense>
+            ) : null}
+
+            {nav.storeScreen === 'checkout' || nav.storeScreen === 'success' ? (
+              <>
+                {nav.storeScreen === 'checkout' ? (
+                  <PageHeader label="Cart" onClick={nav.handleOpenCart} />
+                ) : null}
+                <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
+                  <CheckoutPanel
+                    items={cartItems}
+                    form={checkoutForm}
+                    telegramUserLabel={telegramUserLabel}
+                    telegramContactHint={telegramContactHint}
+                    errorMessage={checkoutError}
+                    isSubmitted={checkoutSubmitted}
+                    orderId={createdOrderId}
+                    successSnapshot={checkoutSuccessSnapshot}
+                    promoFeedback={promoFeedback}
+                    appliedPromo={appliedPromo}
+                    isApplyingPromo={isApplyingPromo}
+                    submitState={checkoutSubmitState}
+                    hasPendingPromoCode={hasPendingPromoCode}
+                    onChangeForm={handleCheckoutFieldChange}
+                    onApplyPromo={handleApplyPromo}
+                    onSubmit={handleSubmitCheckout}
+                    onViewOrders={nav.handleOpenMyOrders}
+                    onBackToCatalog={nav.handleOpenCatalog}
+                    onOpenPrivacy={() => nav.setStoreScreen('privacy')}
+                    onOpenTerms={() => nav.setStoreScreen('terms')}
+                    checkoutStep={nav.checkoutStep}
+                    onCheckoutStepChange={nav.setCheckoutStep}
                   />
                 </Suspense>
               </>
-            ) : (
-              <StoreEmptyState
-                title="No Product Selected"
-                description="Go back to the catalog and pick a piece."
-                actionLabel="Back To Catalog"
-                onAction={handleOpenCatalog}
-              />
-            )
-          ) : null}
-
-          {storeScreen === 'cart' ? (
-            <>
-              <button
-                type="button"
-                onClick={handleOpenCatalog}
-                className="rounded-[24px] border border-white/10 bg-white/6 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-              >
-                ← Catalog
-              </button>
-              <CartPanel
-                items={cartItems}
-                onRemoveItem={handleRemoveFromCart}
-                onCheckout={handleOpenCheckout}
-                onContinueShopping={handleOpenCatalog}
-              />
-            </>
-          ) : null}
-
-          {storeScreen === 'rewards' ? (
-            <Suspense fallback={<StorePanelLoadingState label="Rewards" />}>
-              <RewardsTasksPanel
-                initData={initData}
-                hasTelegramAccess={hasTelegramBuyerAccess}
-                onBack={handleOpenCatalog}
-              />
-            </Suspense>
-          ) : null}
-
-          {storeScreen === 'orders' ? (
-            <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
-              {user?.id ? (
-                <BuyerOrdersPanel
-                  initData={initData}
-                  telegramUserId={user.id}
-                  onBack={handleOpenCatalog}
-                />
-              ) : null}
-            </Suspense>
-          ) : null}
-
-          {storeScreen === 'checkout' || storeScreen === 'success' ? (
-            <>
-              {storeScreen === 'checkout' ? (
-                <button
-                  type="button"
-                  onClick={handleOpenCart}
-                  className="rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
-                >
-                  Back To Cart
-                </button>
-              ) : null}
-              <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
-                <CheckoutPanel
-                  items={cartItems}
-                  form={checkoutForm}
-                  telegramUserLabel={telegramUserLabel}
-                  telegramContactHint={telegramContactHint}
-                  errorMessage={checkoutError}
-                  isSubmitted={checkoutSubmitted}
-                  orderId={createdOrderId}
-                  successSnapshot={checkoutSuccessSnapshot}
-                  promoFeedback={promoFeedback}
-                  appliedPromo={appliedPromo}
-                  isApplyingPromo={isApplyingPromo}
-                  submitState={checkoutSubmitState}
-                  hasPendingPromoCode={hasPendingPromoCode}
-                  onChangeForm={handleCheckoutFieldChange}
-                  onApplyPromo={handleApplyPromo}
-                  onSubmit={handleSubmitCheckout}
-                  onViewOrders={handleOpenMyOrders}
-                  onBackToCatalog={handleOpenCatalog}
-                />
-              </Suspense>
-            </>
-          ) : null}
-
-        </>
-      ) : (
-        <AdminDashboard
-          products={products}
-          analytics={analytics ?? undefined}
-          initData={initData}
-          isTelegram={isTelegram}
-          user={user}
-          isAdminAccessLoading={isAdminAccessLoading}
-          canManageProducts={canManageProducts}
-          adminSubView={adminSubView}
-          onSelectSubView={setAdminSubView}
-          onProductsChanged={reloadProducts}
-        />
-      )}
-
-    </section>
-  </AppShell>
-)
+            ) : null}
+          </>
+        ) : (
+          <AdminDashboard
+            products={products}
+            analytics={analytics ?? undefined}
+            initData={initData}
+            isTelegram={isTelegram}
+            user={user}
+            isAdminAccessLoading={isAdminAccessLoading}
+            canManageProducts={canManageProducts}
+            adminSubView={nav.adminSubView}
+            onSelectSubView={nav.setAdminSubView}
+            onProductsChanged={reloadProducts}
+          />
+        )}
+      </section>
+    </AppShell>
+  )
 }
+
+// ─── Helper components & functions ───
 
 type StorePanelLoadingStateProps = {
   label: string
@@ -791,10 +787,6 @@ function StoreEmptyState({
       </button>
     </article>
   )
-}
-
-function getProductHeatScore(product: Product) {
-  return product.likesCount + product.cartCount * 2
 }
 
 function buildTelegramBotLink() {

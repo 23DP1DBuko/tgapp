@@ -1,4 +1,5 @@
 import type { CreateOrderInput, Order } from '../../types/order'
+import { withRetry, isTransientError } from '../retry'
 
 const DEFAULT_ADMIN_UPDATE_ORDER_STATUS_URL = '/api/admin/updateOrderStatus'
 const DEFAULT_CREATE_CHECKOUT_ORDER_URL = '/api/checkout/createOrder'
@@ -73,71 +74,74 @@ async function readErrorReason(response: Response): Promise<string> {
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<string> {
-  const response = await fetch(
-    import.meta.env.VITE_CREATE_CHECKOUT_ORDER_URL || DEFAULT_CREATE_CHECKOUT_ORDER_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  return withRetry(async () => {
+    const response = await fetch(
+      import.meta.env.VITE_CREATE_CHECKOUT_ORDER_URL || DEFAULT_CREATE_CHECKOUT_ORDER_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData: input.initData,
+          fullName: input.fullName,
+          telegramHandle: input.telegramHandle,
+          telegramUserId: input.telegramUserId ?? null,
+          note: input.note,
+          fulfillmentType: input.fulfillmentType,
+          paymentMethod: input.paymentMethod,
+          deliveryCity: input.deliveryCity,
+          deliveryAddress: input.deliveryAddress,
+          deliveryNotes: input.deliveryNotes,
+          meetupLocation: input.meetupLocation,
+          meetupTimeOption: input.meetupTimeOption,
+          meetupNotes: input.meetupNotes,
+          items: input.items,
+          subtotal: input.subtotal,
+          appliedPromo: input.appliedPromo
+            ? {
+                code: input.appliedPromo.code,
+                discountType: input.appliedPromo.discountType,
+                discountValue: input.appliedPromo.discountValue,
+                discountAmount: input.appliedPromo.discountAmount,
+              }
+            : null,
+          total: input.total,
+          status: input.status,
+          cancelReason: input.cancelReason,
+        }),
       },
-      body: JSON.stringify({
-        fullName: input.fullName,
-        telegramHandle: input.telegramHandle,
-        telegramUserId: input.telegramUserId ?? null,
-        note: input.note,
-        fulfillmentType: input.fulfillmentType,
-        paymentMethod: input.paymentMethod,
-        deliveryCity: input.deliveryCity,
-        deliveryAddress: input.deliveryAddress,
-        deliveryNotes: input.deliveryNotes,
-        meetupLocation: input.meetupLocation,
-        meetupTimeOption: input.meetupTimeOption,
-        meetupNotes: input.meetupNotes,
-        items: input.items,
-        subtotal: input.subtotal,
-        appliedPromo: input.appliedPromo
-          ? {
-              code: input.appliedPromo.code,
-              discountType: input.appliedPromo.discountType,
-              discountValue: input.appliedPromo.discountValue,
-              discountAmount: input.appliedPromo.discountAmount,
-            }
-          : null,
-        total: input.total,
-        status: input.status,
-        cancelReason: input.cancelReason,
-      }),
-    },
-  )
+    )
 
-  if (!response.ok) {
-    let reason = `http_${response.status}`
-    let detail = ''
+    if (!response.ok) {
+      let reason = `http_${response.status}`
+      let detail = ''
 
-    try {
-      const result = (await response.json()) as { reason?: string; detail?: string }
-      if (typeof result.reason === 'string') {
-        reason = result.reason
+      try {
+        const result = (await response.json()) as { reason?: string; detail?: string }
+        if (typeof result.reason === 'string') {
+          reason = result.reason
+        }
+        if (typeof result.detail === 'string' && result.detail) {
+          detail = result.detail
+        }
+      } catch {
+        // Keep the HTTP fallback reason.
       }
-      if (typeof result.detail === 'string' && result.detail) {
-        detail = result.detail
-      }
-    } catch {
-      // Keep the HTTP fallback reason.
+
+      throw new Error(
+        `Failed to create order: ${reason}${detail ? ` (${detail})` : ''}.`,
+      )
     }
 
-    throw new Error(
-      `Failed to create order: ${reason}${detail ? ` (${detail})` : ''}.`,
-    )
-  }
+    const result = (await response.json()) as { orderId?: string }
 
-  const result = (await response.json()) as { orderId?: string }
+    if (!result.orderId) {
+      throw new Error('Failed to create order: missing order ID from backend.')
+    }
 
-  if (!result.orderId) {
-    throw new Error('Failed to create order: missing order ID from backend.')
-  }
-
-  return result.orderId
+    return result.orderId
+  }, { maxRetries: 2, shouldRetry: isTransientError })
 }
 
 export async function listOrders(initData: string): Promise<Order[]> {

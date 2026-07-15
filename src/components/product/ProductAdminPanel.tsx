@@ -15,6 +15,8 @@ import {
   deleteProductImages,
   uploadProductImages,
 } from '../../lib/firebase/storage'
+import { classifyAdminError, formatAdminErrorMessage, type AdminErrorKind } from '../../lib/retry'
+import { CustomSelect } from '../ui/CustomSelect'
 
 type ProductAdminPanelProps = {
   initData: string
@@ -30,6 +32,9 @@ type ProductFormState = {
   price: string
   isAvailable: boolean
   isLimitedLabel: string
+  upcoming: boolean
+  earlyAccessAt: string
+  publicAt: string
 }
 
 type GalleryItem =
@@ -53,6 +58,9 @@ const initialFormState: ProductFormState = {
   price: '',
   isAvailable: true,
   isLimitedLabel: '',
+  upcoming: false,
+  earlyAccessAt: '',
+  publicAt: '',
 }
 
 export function ProductAdminPanel({
@@ -64,6 +72,8 @@ export function ProductAdminPanel({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
   const [feedbackTone, setFeedbackTone] = useState<'success' | 'error'>('success')
+  const [feedbackErrorKind, setFeedbackErrorKind] = useState<AdminErrorKind | null>(null)
+  const [showSlowSaveHint, setShowSlowSaveHint] = useState(false)
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([])
   const [removedExistingImageUrls, setRemovedExistingImageUrls] = useState<string[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string>('new')
@@ -72,6 +82,17 @@ export function ProductAdminPanel({
     null,
   )
   const dragPointerIdRef = useRef<number | null>(null)
+
+  // Slow-save hint: if the form has been submitting for >15s, show a "still working" message.
+  useEffect(() => {
+    if (!isSubmitting) {
+      setShowSlowSaveHint(false)
+      return
+    }
+
+    const timer = setTimeout(() => setShowSlowSaveHint(true), 15_000)
+    return () => clearTimeout(timer)
+  }, [isSubmitting])
 
   const selectedProduct =
     selectedProductId === 'new'
@@ -115,6 +136,9 @@ export function ProductAdminPanel({
       price: String(product.price),
       isAvailable: product.isAvailable,
       isLimitedLabel: product.isLimitedLabel ?? '',
+      upcoming: product.upcoming ?? false,
+      earlyAccessAt: product.earlyAccessAt ? formatTimestampForDatetimeLocal(product.earlyAccessAt) : '',
+      publicAt: product.publicAt ? formatTimestampForDatetimeLocal(product.publicAt) : '',
     })
     setRemovedExistingImageUrls([])
     setGalleryItems((currentItems) => {
@@ -130,6 +154,7 @@ export function ProductAdminPanel({
   function handleProductSelection(productId: string) {
     setSelectedProductId(productId)
     setFeedbackMessage(null)
+    setFeedbackErrorKind(null)
 
     if (productId === 'new') {
       resetToCreateMode()
@@ -156,12 +181,14 @@ export function ProductAdminPanel({
 
     if (!trimmedName || !trimmedDescription || Number.isNaN(parsedPrice)) {
       setFeedbackTone('error')
+      setFeedbackErrorKind('validation')
       setFeedbackMessage('Name, description, and a valid price are required.')
       return
     }
 
     setIsSubmitting(true)
     setFeedbackMessage(null)
+    setFeedbackErrorKind(null)
 
     try {
       const pendingGalleryItems = galleryItems.filter(
@@ -188,7 +215,9 @@ export function ProductAdminPanel({
       })
 
       if (nextImages.length === 0) {
+        setIsSubmitting(false)
         setFeedbackTone('error')
+        setFeedbackErrorKind('validation')
         setFeedbackMessage('At least one product image is required before saving.')
         return
       }
@@ -202,6 +231,9 @@ export function ProductAdminPanel({
         isAvailable: form.isAvailable,
         images: nextImages,
         isLimitedLabel: form.isLimitedLabel.trim() || undefined,
+        upcoming: form.upcoming,
+        earlyAccessAt: form.earlyAccessAt || null,
+        publicAt: form.publicAt || null,
       }
 
       if (selectedProduct) {
@@ -212,9 +244,12 @@ export function ProductAdminPanel({
       }
 
       if (selectedProduct) {
+        // Reconstruct the form from saved payload, but keep Timestamp-typed fields from the original
         applyProductToForm({
           ...selectedProduct,
           ...payload,
+          earlyAccessAt: selectedProduct.earlyAccessAt,
+          publicAt: selectedProduct.publicAt,
         })
       } else {
         resetToCreateMode()
@@ -228,10 +263,10 @@ export function ProductAdminPanel({
       )
       onProductsChanged()
     } catch (error) {
+      const kind = classifyAdminError(error)
       setFeedbackTone('error')
-      setFeedbackMessage(
-        error instanceof Error ? error.message : 'Failed to create product.',
-      )
+      setFeedbackErrorKind(kind)
+      setFeedbackMessage(formatAdminErrorMessage(kind, error))
     } finally {
       setIsSubmitting(false)
     }
@@ -252,6 +287,7 @@ export function ProductAdminPanel({
 
     setIsSubmitting(true)
     setFeedbackMessage(null)
+    setFeedbackErrorKind(null)
 
     try {
       await deleteProductImages(initData, selectedProduct.images)
@@ -261,10 +297,10 @@ export function ProductAdminPanel({
       setFeedbackMessage('Product and its saved Storage images were deleted.')
       onProductsChanged()
     } catch (error) {
+      const kind = classifyAdminError(error)
       setFeedbackTone('error')
-      setFeedbackMessage(
-        error instanceof Error ? error.message : 'Failed to delete product.',
-      )
+      setFeedbackErrorKind(kind)
+      setFeedbackMessage(formatAdminErrorMessage(kind, error))
     } finally {
       setIsSubmitting(false)
     }
@@ -285,6 +321,7 @@ export function ProductAdminPanel({
 
     setIsSubmitting(true)
     setFeedbackMessage(null)
+    setFeedbackErrorKind(null)
 
     try {
       const soldProductImages = soldProducts.flatMap((product) => product.images)
@@ -296,10 +333,10 @@ export function ProductAdminPanel({
       setFeedbackMessage('All sold products and their saved Storage images were deleted.')
       onProductsChanged()
     } catch (error) {
+      const kind = classifyAdminError(error)
       setFeedbackTone('error')
-      setFeedbackMessage(
-        error instanceof Error ? error.message : 'Failed to delete sold products.',
-      )
+      setFeedbackErrorKind(kind)
+      setFeedbackMessage(formatAdminErrorMessage(kind, error))
     } finally {
       setIsSubmitting(false)
     }
@@ -446,18 +483,17 @@ export function ProductAdminPanel({
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Mode
           </span>
-          <select
+          <CustomSelect
             value={selectedProductId}
-            onChange={(event) => handleProductSelection(event.target.value)}
-            className={darkSelectClassName}
-          >
-            <option value="new">Create new product</option>
-            {filteredProducts.map((product) => (
-              <option key={product.id} value={product.id}>
-                Edit: {product.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: 'new', label: 'Create new product' },
+              ...filteredProducts.map((p) => ({
+                value: p.id,
+                label: `Edit: ${p.name}`,
+              })),
+            ]}
+            onChange={handleProductSelection}
+          />
         </label>
 
         <label className="block">
@@ -495,22 +531,19 @@ export function ProductAdminPanel({
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Category
             </span>
-            <select
+            <CustomSelect
               value={form.category}
-              onChange={(event) =>
+              options={PRODUCT_CATEGORIES.map((cat) => ({
+                value: cat,
+                label: cat,
+              }))}
+              onChange={(value) =>
                 setForm((current) => ({
                   ...current,
-                  category: event.target.value as ProductCategory,
+                  category: value as ProductCategory,
                 }))
               }
-              className={darkSelectClassName}
-            >
-              {PRODUCT_CATEGORIES.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
+            />
           </label>
 
           <label className="block">
@@ -550,10 +583,14 @@ export function ProductAdminPanel({
 
           {/* Dashed dropzone */}
           <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-white/14 bg-white/6 px-4 py-6 transition-colors hover:border-white/25">
-            <svg viewBox="0 0 20 20" fill="currentColor" className="mb-2 h-6 w-6 text-[var(--shop-muted)]" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="mb-2 h-6 w-6 shrink-0 text-[var(--shop-muted)]" aria-hidden="true">
+          <g transform="translate(2, 2)">
+
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636V13.25z" />
               <path fillRule="evenodd" d="M3.5 12.75a.75.75 0 01.75.75v2.25a1 1 0 001 1h9.5a1 1 0 001-1V13.5a.75.75 0 011.5 0v2.25a2.5 2.5 0 01-2.5 2.5h-9.5a2.5 2.5 0 01-2.5-2.5V13.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
-            </svg>
+            
+          </g>
+        </svg>
             <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
               Add Images
             </span>
@@ -609,11 +646,11 @@ export function ProductAdminPanel({
         </label>
 
         <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
-          <span className="text-sm text-[var(--shop-cream)]">Product is available</span>
-          <button
+          <span className="text-sm text-[var(--shop-cream)]">Product is available</span>            <button
             type="button"
             role="switch"
             aria-checked={form.isAvailable}
+            aria-label="Toggle product availability"
             onClick={() =>
               setForm((current) => ({ ...current, isAvailable: !current.isAvailable }))
             }
@@ -629,16 +666,103 @@ export function ProductAdminPanel({
           </button>
         </label>
 
+        {/* Upcoming toggle — only when not available */}
+        {!form.isAvailable ? (
+          <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
+            <span className="text-sm text-[var(--shop-cream)]">Mark as Upcoming</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.upcoming}
+              aria-label="Toggle upcoming status"
+              onClick={() =>
+                setForm((current) => ({ ...current, upcoming: !current.upcoming }))
+              }
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+                form.upcoming ? 'bg-amber-500' : 'bg-white/15'
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
+                  form.upcoming ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </label>
+        ) : (
+          <input type="hidden" value={String(form.upcoming)} />
+        )}
+
+        {/* Early Access scheduling — only when product is available */}
+        {form.isAvailable ? (
+          <div className="space-y-3 rounded-2xl border border-amber-500/20 bg-amber-500/6 px-4 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
+              Early Access Scheduling
+            </p>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                Early Access Start
+              </span>
+              <input
+                type="datetime-local"
+                value={form.earlyAccessAt}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, earlyAccessAt: event.target.value }))
+                }
+                className={inputClassName}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                Public Release
+              </span>
+              <input
+                type="datetime-local"
+                value={form.publicAt}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, publicAt: event.target.value }))
+                }
+                className={inputClassName}
+              />
+            </label>
+            <p className="text-[10px] leading-relaxed text-stone-500">
+              Set an early access window where only users with at least 1 referral can purchase. After the public release time, everyone can buy.
+            </p>
+          </div>
+        ) : null}
+
+        {/* Slow-save hint — shown after 15s of submitting */}
+        {showSlowSaveHint ? (
+          <p className="rounded-2xl bg-amber-500/12 px-4 py-3 text-sm text-amber-200">
+            Save is still in progress. Large images can take up to a minute to upload.
+          </p>
+        ) : null}
+
         {feedbackMessage ? (
-          <p
+          <div
             className={`rounded-2xl px-4 py-3 text-sm ${
               feedbackTone === 'success'
                 ? 'bg-emerald-300/18 text-emerald-100'
                 : 'bg-[var(--shop-red)]/18 text-[var(--shop-cream)]'
             }`}
           >
-            {feedbackMessage}
-          </p>
+            <p>{feedbackMessage}</p>
+            {/* Retry button for recoverable errors */}
+            {feedbackTone === 'error' && feedbackErrorKind && feedbackErrorKind !== 'validation' ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  // Re-trigger the form submit
+                  event.preventDefault()
+                  const form = (event.currentTarget as HTMLElement).closest('form')
+                  if (form) form.requestSubmit()
+                }}
+                className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition-colors hover:bg-white/18"
+              >
+                Try Again
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         <button
@@ -674,9 +798,6 @@ export function ProductAdminPanel({
 
 const inputClassName =
   'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
-
-const darkSelectClassName =
-  'w-full rounded-2xl border border-white/10 bg-[var(--shop-panel)] px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition focus:border-[var(--shop-red)]'
 
 type PendingImageCardProps = {
   item: GalleryItem
@@ -748,6 +869,7 @@ function GalleryImageCard({
           src={imageSrc}
           alt={imageLabel}
           loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
         />
       </div>
@@ -788,4 +910,27 @@ function cleanupPendingPreviewUrls(items: GalleryItem[]) {
   })
 }
 
+function formatTimestampForDatetimeLocal(
+  value: { toMillis?: () => number; seconds?: number } | string | null | undefined,
+): string {
+  if (!value) return ''
+
+  let ms: number
+
+  if (typeof value === 'string') {
+    ms = new Date(value).getTime()
+  } else if (typeof value.toMillis === 'function') {
+    ms = value.toMillis()
+  } else if (typeof value.seconds === 'number') {
+    ms = value.seconds * 1000
+  } else {
+    return ''
+  }
+
+  if (!Number.isFinite(ms)) return ''
+
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 

@@ -4,6 +4,7 @@ export interface Campaign {
   headingPart1: string
   headingPart2: string
   subtitle: string
+  imageUrl: string
   isActive: boolean
   sortOrder: number
   createdAt: string | null
@@ -15,6 +16,7 @@ export type CampaignInput = {
   headingPart1: string
   headingPart2: string
   subtitle: string
+  imageUrl: string
   isActive: boolean
   sortOrder: number
 }

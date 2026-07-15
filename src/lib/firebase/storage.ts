@@ -1,7 +1,13 @@
+import { fetchWithTimeout } from '../retry'
+
 const DEFAULT_ADMIN_UPLOAD_PRODUCT_IMAGE_URL = '/api/admin/uploadProductImage'
 const DEFAULT_ADMIN_DELETE_PRODUCT_IMAGES_URL = '/api/admin/deleteProductImages'
 const DEFAULT_ADMIN_UPLOAD_BANNER_IMAGE_URL = '/api/admin/uploadBannerImage'
+const DEFAULT_ADMIN_UPLOAD_GIVEAWAY_IMAGE_URL = '/api/admin/uploadGiveawayImage'
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+
+/** Timeout for image upload/delete operations (60 seconds to allow for larger images). */
+const IMAGE_FETCH_TIMEOUT_MS = 60_000
 
 type UploadProductImageAdminResponse = {
   ok?: boolean
@@ -36,7 +42,8 @@ async function readErrorReason(response: Response): Promise<string> {
   return `${reason}${detail ? ` (${detail})` : ''}`
 }
 
-function fileToBase64(file: File): Promise<string> {
+/** Read a Blob and return its base64-encoded data (without the data: prefix). */
+async function blobToBase64(blob: Blob, label = 'image'): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
 
@@ -45,7 +52,7 @@ function fileToBase64(file: File): Promise<string> {
       const [, base64Data = ''] = result.split(',', 2)
 
       if (!base64Data) {
-        reject(new Error(`Failed to read image file: ${file.name}.`))
+        reject(new Error(`Failed to read image: ${label}.`))
         return
       }
 
@@ -53,10 +60,10 @@ function fileToBase64(file: File): Promise<string> {
     }
 
     reader.onerror = () => {
-      reject(new Error(`Failed to read image file: ${file.name}.`))
+      reject(new Error(`Failed to read image: ${label}.`))
     }
 
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(blob)
   })
 }
 
@@ -70,6 +77,69 @@ function validateImageFile(file: File) {
   }
 }
 
+/**
+ * Converts an image File to WebP format in the browser using Canvas API.
+ * Falls back to the original file if conversion fails or WebP is unsupported.
+ * Skips conversion for files that are already WebP.
+ */
+async function convertToWebP(file: File, quality = 0.82): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+  // Already WebP — skip conversion
+  if (file.type === 'image/webp') {
+    return { blob: file, fileName: file.name, contentType: file.type }
+  }
+
+  try {
+    // Fast check: some very old browsers don't support canvas.toBlob at all
+    if (typeof document.createElement('canvas').toBlob !== 'function') {
+      return { blob: file, fileName: file.name, contentType: file.type }
+    }
+    const img = await loadImage(file)
+    const canvas = document.createElement('canvas')
+    canvas.width = img.width
+    canvas.height = img.height
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Could not get canvas context')
+
+    ctx.drawImage(img, 0, 0)
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/webp', quality),
+    )
+
+    if (!blob) throw new Error('Canvas toBlob returned null')
+
+    // Use the original filename but swap extension to .webp
+    const webpName = file.name.replace(/\.[^.]+$/, '') + '.webp'
+
+    return { blob, fileName: webpName, contentType: 'image/webp' }
+  } catch {
+    // Conversion failed — fall back to original
+    return { blob: file, fileName: file.name, contentType: file.type }
+  }
+}
+
+/** Helper: load a File into an HTMLImageElement */
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error(`Failed to load image: ${file.name}`))
+    }
+    img.src = url
+  })
+}
+
+/**
+ * Upload multiple product images with client-side WebP conversion.
+ */
 export async function uploadProductImages(
   initData: string,
   files: File[],
@@ -77,8 +147,11 @@ export async function uploadProductImages(
   const uploads = files.map(async (file) => {
     validateImageFile(file)
 
-    const base64Data = await fileToBase64(file)
-    const response = await fetch(
+    // Convert to WebP before reading as base64
+    const { blob, fileName, contentType } = await convertToWebP(file)
+
+    const base64Data = await blobToBase64(blob, fileName)
+    const response = await fetchWithTimeout(
       import.meta.env.VITE_ADMIN_UPLOAD_PRODUCT_IMAGE_URL ||
         DEFAULT_ADMIN_UPLOAD_PRODUCT_IMAGE_URL,
       {
@@ -88,11 +161,12 @@ export async function uploadProductImages(
         },
         body: JSON.stringify({
           initData,
-          fileName: file.name,
-          contentType: file.type,
+          fileName,
+          contentType,
           base64Data,
         }),
       },
+      IMAGE_FETCH_TIMEOUT_MS,
     )
 
     if (!response.ok) {
@@ -119,7 +193,7 @@ export async function deleteProductImages(
     return
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     import.meta.env.VITE_ADMIN_DELETE_PRODUCT_IMAGES_URL ||
       DEFAULT_ADMIN_DELETE_PRODUCT_IMAGES_URL,
     {
@@ -132,17 +206,18 @@ export async function deleteProductImages(
         imageUrls,
       }),
     },
+    IMAGE_FETCH_TIMEOUT_MS,
   )
 
   if (!response.ok) {
-    throw new Error(`Failed to delete product images: ${await readErrorReason(response)}.`)
+    throw new Error(`${await readErrorReason(response)}`)
   }
 
   const result = (await response.json()) as DeleteProductImagesAdminResponse
 
   if (!result.ok) {
     throw new Error(
-      `Failed to delete product images: ${result.reason ?? 'invalid backend response'}.`,
+      `${result.reason ?? 'invalid_backend_response'}`,
     )
   }
 }
@@ -159,7 +234,7 @@ export async function uploadBannerImage(
 ): Promise<string> {
   validateImageFile(file)
 
-  const base64Data = await fileToBase64(file)
+  const base64Data = await blobToBase64(file, file.name)
 
   const response = await fetch(
     import.meta.env.VITE_ADMIN_UPLOAD_BANNER_IMAGE_URL ||
@@ -187,6 +262,51 @@ export async function uploadBannerImage(
 
   if (!result.ok || typeof result.imageUrl !== 'string' || !result.imageUrl) {
     throw new Error('Failed to upload banner image: invalid backend response.')
+  }
+
+  return result.imageUrl
+}
+
+type UploadGiveawayImageResponse = {
+  ok?: boolean
+  imageUrl?: string | null
+  reason?: string
+}
+
+export async function uploadGiveawayImage(
+  initData: string,
+  file: File,
+): Promise<string> {
+  validateImageFile(file)
+
+  const base64Data = await blobToBase64(file, file.name)
+
+  const response = await fetch(
+    import.meta.env.VITE_ADMIN_UPLOAD_GIVEAWAY_IMAGE_URL ||
+      DEFAULT_ADMIN_UPLOAD_GIVEAWAY_IMAGE_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        initData,
+        fileName: file.name,
+        contentType: file.type,
+        base64Data,
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    const reason = await readErrorReason(response)
+    throw new Error(`Failed to upload giveaway image: ${reason}.`)
+  }
+
+  const result = (await response.json()) as UploadGiveawayImageResponse
+
+  if (!result.ok || typeof result.imageUrl !== 'string' || !result.imageUrl) {
+    throw new Error('Failed to upload giveaway image: invalid backend response.')
   }
 
   return result.imageUrl

@@ -55,7 +55,12 @@ service cloud.firestore {
           'cartCount',
           'images',
           'createdAt',
-          'isLimitedLabel'
+          'isLimitedLabel',
+          'upcoming',
+          'earlyAccessAt',
+          'publicAt',
+          'reservedBy',
+          'reservedUntil'
         ])
         && isShortString(data.name, 120)
         && isShortString(data.description, 2000)
@@ -72,7 +77,12 @@ service cloud.firestore {
         && data.cartCount >= 0
         && isStringList(data.images, 8, 2000)
         && data.createdAt is timestamp
-        && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80));
+        && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80))
+        && (!('upcoming' in data) || data.upcoming is bool)
+        && (!('earlyAccessAt' in data) || data.earlyAccessAt == null || data.earlyAccessAt is string)
+        && (!('publicAt' in data) || data.publicAt == null || data.publicAt is string)
+        && (!('reservedBy' in data) || data.reservedBy == null || (data.reservedBy is number && data.reservedBy >= 0))
+        && (!('reservedUntil' in data) || data.reservedUntil == null || data.reservedUntil is timestamp);
     }
 
     function isPromoDocument(data) {
@@ -82,7 +92,8 @@ service cloud.firestore {
           'discountValue',
           'isActive',
           'expiresAt',
-          'usageLimit'
+          'usageLimit',
+          'usageCount'
         ])
         && isShortString(data.code, 40)
         && isPromoDiscountType(data.discountType)
@@ -91,7 +102,8 @@ service cloud.firestore {
         && data.discountValue <= 100000
         && data.isActive is bool
         && (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp)
-        && (!('usageLimit' in data) || data.usageLimit == null || (data.usageLimit is number && data.usageLimit >= 0));
+        && (!('usageLimit' in data) || data.usageLimit == null || (data.usageLimit is number && data.usageLimit >= 0))
+        && (!('usageCount' in data) || (data.usageCount is number && data.usageCount >= 0));
     }
 
     function isOrderItemList(items) {
@@ -189,6 +201,81 @@ service cloud.firestore {
     match /broadcasts/{broadcastId} {
       allow read: if true;
       allow create, update, delete: if false;
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    match /giveaways/{giveawayId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+
+      // Subcollection for giveaway entries — all access via Cloud Functions only
+      match /entries/{entryId} {
+        allow read: if false;
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /tasks/{taskId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    match /telegramSubscribers/{subscriberId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /productNotifySubscriptions/{subscriptionId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /userRewards/{rewardId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /polls/{pollId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    match /pollVotes/{voteId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    // ── Privacy & Consent Collections ──
+
+    // userConsent — stores GDPR consent records. All access via Cloud Functions only.
+    match /userConsent/{consentId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    // userSettings — stores user privacy preferences (leaderboard visibility, etc.). All access via Cloud Functions only.
+    match /userSettings/{settingId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    // dailyCheckins — stores daily check-in state. All access via Cloud Functions only.
+    match /dailyCheckins/{userId} {
+      allow read: if false;
+      allow create, update, delete: if false;
+    }
+
+    // presence — realtime online user counter. Readable by all.
+    // Only lastSeen timestamp can be written by any user.
+    match /presence/{userId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['lastSeen'])
+        && request.resource.data.lastSeen is timestamp;
+      allow delete: if false;
     }
   }
 }

@@ -11,6 +11,7 @@ export type UseCartOptions = {
   requireTelegramAccess: (action: string) => boolean
   productIdSet: Set<string>
   availableProductIdSet: Set<string>
+  initData: string
   onError?: (message: string) => void
 }
 
@@ -25,7 +26,7 @@ export type UseCartResult = {
 }
 
 export function useCart(options: UseCartOptions): UseCartResult {
-  const { requireTelegramAccess, productIdSet, availableProductIdSet, onError } = options
+  const { requireTelegramAccess, productIdSet, availableProductIdSet, initData, onError } = options
   const reportError = onError ?? console.error
 
   const [cartItems, setCartItems] = useState<CartItem[]>(() =>
@@ -94,7 +95,7 @@ export function useCart(options: UseCartOptions): UseCartResult {
     })
 
     try {
-      await updateProductCartCount(product.id, 1)
+      await updateProductCartCount(initData, product.id, 1)
     } catch (error) {
       setCartItems((currentItems) =>
         currentItems.filter((item) => item.productId !== product.id),
@@ -125,7 +126,7 @@ export function useCart(options: UseCartOptions): UseCartResult {
     }
 
     try {
-      await updateProductCartCount(productId, -1)
+      await updateProductCartCount(initData, productId, -1)
     } catch (error) {
       setCartItems((currentItems) => [...currentItems, itemToRemove])
       reportError(
