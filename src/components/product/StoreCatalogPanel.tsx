@@ -324,7 +324,7 @@ export function StoreCatalogPanel({
         <div className="flex items-center gap-2">
           {pullDistance >= PULL_THRESHOLD ? (
             <>
-              <svg className="h-4 w-4 shrink-0 animate-bounce text-[var(--shop-cream)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg className="h-4 w-4 shrink-0 animate-[pull-indicate_0.7s_ease-in-out_infinite] text-[var(--shop-cream)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14" />
                 <path d="m12 5 7 7-7 7" />
               </svg>

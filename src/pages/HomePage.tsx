@@ -28,7 +28,7 @@ import {
   verifyTelegramAdminAccess,
 } from '../lib/telegram/admin'
 import { readRouteFromHash } from '../lib/storeRoute'
-import { getTelegramWebAppState, triggerHapticNotification } from '../lib/telegram/webApp'
+import { getTelegramWebAppState, isDevMockEnabled, triggerHapticNotification } from '../lib/telegram/webApp'
 import { useTelegramBackButton } from '../hooks/useTelegramBackButton'
 import { listCampaigns } from '../lib/firebase/campaigns'
 import { fetchAdminAnalytics } from '../lib/firebase/analytics'
@@ -110,6 +110,15 @@ export function HomePage() {
       try { return localStorage.getItem('yungwear-consent-accepted') } catch { return null }
     })()
     if (locallyAccepted === 'true') {
+      setShowConsent(false)
+      return
+    }
+
+    // Dev mock: skip the API call entirely, auto-accept locally
+    if (isDevMockEnabled()) {
+      try {
+        localStorage.setItem('yungwear-consent-accepted', 'true')
+      } catch { /* ignore */ }
       setShowConsent(false)
       return
     }
@@ -272,6 +281,7 @@ export function HomePage() {
     checkoutSubmitted,
     checkoutSubmitState,
     checkoutError,
+    fieldErrors,
     createdOrderId,
     checkoutSuccessSnapshot,
     telegramUserLabel,
@@ -375,8 +385,7 @@ export function HomePage() {
       navStoreScreen === 'cart' ||
       navStoreScreen === 'checkout' ||
       navStoreScreen === 'success' ||
-      navStoreScreen === 'rewards' ||
-      navStoreScreen === 'polls'
+      navStoreScreen === 'rewards'
     ) {
       navSetStoreScreen('catalog')
     }
@@ -454,6 +463,15 @@ export function HomePage() {
   useEffect(() => {
     let isCancelled = false
     async function resolveAdminAccess() {
+      // Dev mock mode: use browser fallback instead of calling verification API
+      if (isDevMockEnabled()) {
+        if (!isCancelled) {
+          setCanManageProducts(true)
+          setIsAdminAccessLoading(false)
+        }
+        return
+      }
+
       if (!user) {
         if (!isCancelled) {
           setCanManageProducts(canUseBrowserAdminFallback())
@@ -696,6 +714,7 @@ export function HomePage() {
                   <CheckoutPanel
                     items={cartItems}
                     form={checkoutForm}
+                    fieldErrors={fieldErrors}
                     telegramUserLabel={telegramUserLabel}
                     telegramContactHint={telegramContactHint}
                     errorMessage={checkoutError}
@@ -710,6 +729,7 @@ export function HomePage() {
                     onChangeForm={handleCheckoutFieldChange}
                     onApplyPromo={handleApplyPromo}
                     onSubmit={handleSubmitCheckout}
+                    onRemoveItem={handleRemoveFromCart}
                     onViewOrders={nav.handleOpenMyOrders}
                     onBackToCatalog={nav.handleOpenCatalog}
                     onOpenPrivacy={() => nav.setStoreScreen('privacy')}

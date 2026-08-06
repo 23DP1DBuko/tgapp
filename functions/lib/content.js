@@ -185,7 +185,13 @@ export const broadcastMessageAdmin = onRequest({
         let failedCount = 0;
         for (const doc of snapshot.docs) {
             const data = doc.data();
-            const chatId = typeof data.chatId === 'number' ? data.chatId : null;
+            // For private bot chats, chatId === telegramUserId. Fall back to telegramUserId
+            // for docs created by the broadcast toggle before chatId was stored.
+            const chatId = typeof data.chatId === 'number'
+                ? data.chatId
+                : typeof data.telegramUserId === 'number'
+                    ? data.telegramUserId
+                    : null;
             if (!chatId)
                 continue;
             try {
@@ -848,8 +854,10 @@ export const toggleBroadcastSubscription = onRequest({
         const snapshot = await docRef.get();
         if (!snapshot.exists) {
             // No subscriber doc yet – create one with the requested value (default true)
+            // For private bot chats, chatId === telegramUserId, so we store both.
             await docRef.set({
                 telegramUserId,
+                chatId: telegramUserId,
                 allowBroadcasts: requestedValue === undefined ? true : requestedValue,
                 createdAt: FieldValue.serverTimestamp(),
                 lastSeenAt: FieldValue.serverTimestamp(),

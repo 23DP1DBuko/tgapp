@@ -86,7 +86,37 @@ declare global {
   }
 }
 
+export function isDevMockEnabled(): boolean {
+  return (
+    import.meta.env.DEV &&
+    import.meta.env.VITE_ENABLE_ADMIN_IN_BROWSER === 'true' &&
+    !!import.meta.env.VITE_DEV_TELEGRAM_USER_ID
+  )
+}
+
+function getDevMockState(): TelegramWebAppState {
+  const userId = Number(import.meta.env.VITE_DEV_TELEGRAM_USER_ID) || 12345
+  const username = import.meta.env.VITE_DEV_TELEGRAM_USERNAME?.trim() || 'dev_user'
+  const firstName = import.meta.env.VITE_DEV_TELEGRAM_FIRST_NAME?.trim() || 'Dev'
+
+  return {
+    isTelegram: true,
+    initData: `dev_mock_user=${userId}`,
+    user: {
+      id: userId,
+      first_name: firstName,
+      username,
+    },
+    theme: fallbackTheme,
+  }
+}
+
 export function getTelegramWebAppState(): TelegramWebAppState {
+  // Dev mode: return mock Telegram data from env vars
+  if (isDevMockEnabled()) {
+    return getDevMockState()
+  }
+
   const webApp = window.Telegram?.WebApp
 
   webApp?.ready()

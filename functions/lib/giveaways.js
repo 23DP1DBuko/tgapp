@@ -57,19 +57,49 @@ export const upsertGiveawayAdmin = onRequest({
     }
     try {
         const now = new Date().toISOString();
-        const prizesWithDetails = giveaway.prizes.map((p) => ({
-            productId: p.productId.trim(),
-            place: p.place,
-            productName: '',
-            productImage: '',
+        const db = getFirestore();
+        // Fetch full product details from Firestore for each prize
+        const prizesWithDetails = await Promise.all(giveaway.prizes.map(async (p) => {
+            const productDoc = await db.collection('products').doc(p.productId.trim()).get();
+            const productData = productDoc.exists
+                ? productDoc.data()
+                : null;
+            return {
+                productId: p.productId.trim(),
+                place: p.place,
+                productName: productData?.name ?? '',
+                productImage: (productData?.images && productData.images[0]) ?? '',
+            };
         }));
-        const entryTasksWithIds = giveaway.entryTasks.map((t) => ({
-            id: generateShortId(),
+        // Resolve task IDs to full entry task definitions
+        const taskIds = giveaway.taskIds ?? [];
+        const taskTickets = giveaway.taskTickets ?? {};
+        const resolvedTasks = [];
+        if (taskIds.length > 0) {
+            for (const taskId of taskIds) {
+                const taskDoc = await db.collection('tasks').doc(taskId).get();
+                if (taskDoc.exists) {
+                    const taskData = taskDoc.data();
+                    resolvedTasks.push({
+                        id: taskId,
+                        type: 'custom',
+                        label: taskData.title?.trim() ?? 'Task',
+                        ticketsGranted: taskTickets[taskId] ?? 5,
+                        verifyMethod: 'manual',
+                        metadata: taskData.actionUrl?.trim() || null,
+                    });
+                }
+            }
+        }
+        // Keep any legacy entry tasks that aren't in the resolved task IDs
+        const legacyTasks = (giveaway.entryTasks ?? []).filter((t) => t.id && !taskIds.includes(t.id));
+        const entryTasksWithIds = [...resolvedTasks, ...legacyTasks].map((t) => ({
+            id: t.id || generateShortId(),
             type: t.type,
-            label: t.label.trim(),
+            label: t.label,
             ticketsGranted: t.ticketsGranted,
             verifyMethod: t.verifyMethod,
-            metadata: t.metadata?.trim() || null,
+            metadata: t.metadata || null,
         }));
         const payload = {
             title: giveaway.title.trim(),
@@ -82,6 +112,8 @@ export const upsertGiveawayAdmin = onRequest({
             winnersCount: giveaway.prizes.length,
             accessLevel: giveaway.accessLevel,
             entryTasks: entryTasksWithIds,
+            taskIds: taskIds,
+            taskTickets: taskTickets,
             baseEntryTickets: giveaway.baseEntryTickets,
             enteredCount: 0,
             totalTicketsPool: 0,
@@ -606,6 +638,92 @@ export const getGiveawayEntries = onRequest({
             entries: [],
             totalParticipants: 0,
             myEntry: null,
+            reason: 'internal_error',
+            detail: error instanceof Error ? error.message : 'Unknown backend error.',
+        });
+    }
+});
+export const getMyGiveawayEntry = onRequest({
+    cors: true,
+    invoker: 'public',
+    secrets: [telegramBotToken],
+}, async (request, response) => {
+    if (request.method !== 'POST') {
+        response.status(405).json({
+            ok: false,
+            entry: null,
+            reason: 'invalid_method',
+        });
+        return;
+    }
+    const botToken = telegramBotToken.value();
+    if (!botToken) {
+        response.status(500).json({
+            ok: false,
+            entry: null,
+            reason: 'missing_bot_token',
+        });
+        return;
+    }
+    const body = request.body;
+    const initData = typeof body?.initData === 'string' ? body.initData : '';
+    const giveawayId = typeof body?.giveawayId === 'string' ? body.giveawayId.trim() : '';
+    if (!giveawayId) {
+        response.status(400).json({
+            ok: false,
+            entry: null,
+            reason: 'invalid_payload',
+        });
+        return;
+    }
+    const verificationResult = verifyTelegramInitData(initData, botToken);
+    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
+        response.status(401).json({
+            ok: false,
+            entry: null,
+            reason: verificationResult.reason === 'expired_init_data'
+                ? 'expired_init_data'
+                : 'invalid_init_data',
+        });
+        return;
+    }
+    const telegramUserId = verificationResult.user.id;
+    try {
+        const db = getFirestore();
+        // Targeted query — only the current user's entry, limited to 1
+        const entriesSnapshot = await db
+            .collection('giveaways')
+            .doc(giveawayId)
+            .collection('entries')
+            .where('telegramUserId', '==', telegramUserId)
+            .limit(1)
+            .get();
+        if (entriesSnapshot.empty) {
+            response.status(200).json({
+                ok: true,
+                entry: null,
+                reason: 'not_found',
+            });
+            return;
+        }
+        const data = entriesSnapshot.docs[0].data();
+        const entry = {
+            telegramUserId: data.telegramUserId,
+            telegramUsername: data.telegramUsername ?? null,
+            joinedAt: data.joinedAt,
+            completedTaskIds: data.completedTaskIds ?? [],
+            totalTickets: data.totalTickets,
+        };
+        response.status(200).json({
+            ok: true,
+            entry,
+            reason: 'found',
+        });
+    }
+    catch (error) {
+        response.status(500).json({
+            ok: false,
+            entry: null,
             reason: 'internal_error',
             detail: error instanceof Error ? error.message : 'Unknown backend error.',
         });

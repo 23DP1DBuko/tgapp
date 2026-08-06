@@ -13,6 +13,7 @@ import {
   type PromoDiscountType,
 } from '../../types/promo'
 import { CustomSelect } from '../ui/CustomSelect'
+import { Input } from '../ui/Input'
 
 type PromoAdminPanelProps = {
   isEnabled: boolean
@@ -276,12 +277,13 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Code
             </span>
-            <input
+            <Input
+              size="md"
+              focusColor="red"
               value={form.code}
               onChange={(event) =>
                 setForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))
               }
-              className={inputClassName}
               placeholder="DROP10"
             />
           </label>
@@ -290,12 +292,13 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Discount Value
             </span>
-            <input
+            <Input
+              size="md"
+              focusColor="red"
               value={form.discountValue}
               onChange={(event) =>
                 setForm((current) => ({ ...current, discountValue: event.target.value }))
               }
-              className={inputClassName}
               inputMode="decimal"
               placeholder="10"
             />
@@ -327,13 +330,14 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Usage Limit
             </span>
-            <input
+            <Input
               value={form.usageLimit}
               onChange={(event) =>
                 setForm((current) => ({ ...current, usageLimit: event.target.value }))
               }
-              className={inputClassName}
               inputMode="numeric"
+              size="md"
+              focusColor="red"
               placeholder="Leave empty for unlimited"
             />
           </label>
@@ -383,13 +387,14 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Expires At
           </span>
-          <input
+          <Input
+            size="md"
+            focusColor="red"
             type="date"
             value={form.expiresAt}
             onChange={(event) =>
               setForm((current) => ({ ...current, expiresAt: event.target.value }))
             }
-            className={inputClassName}
           />
         </label>
 
@@ -463,7 +468,4 @@ export function PromoAdminPanel({ initData, isEnabled }: PromoAdminPanelProps) {
     </article>
   )
 }
-
-const inputClassName =
-  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
 

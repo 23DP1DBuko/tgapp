@@ -22,6 +22,18 @@ export default defineConfig({
           ) {
             return 'react-vendor'
           }
+
+          if (id.includes('node_modules/motion/') || id.includes('node_modules/framer-motion/')) {
+            return 'motion'
+          }
+
+          if (id.includes('node_modules/recharts/') || id.includes('node_modules/d3-')) {
+            return 'recharts'
+          }
+
+          if (id.includes('node_modules/lucide-react/')) {
+            return 'icons'
+          }
         },
       },
     },

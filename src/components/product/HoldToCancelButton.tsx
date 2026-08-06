@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react'
 
-import { motion, useMotionValue } from 'framer-motion'
+import { motion, useMotionValue } from 'motion/react'
 
 /**
  * HoldToCancelButton

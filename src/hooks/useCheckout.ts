@@ -35,6 +35,7 @@ export type UseCheckoutResult = {
   checkoutSubmitted: boolean
   checkoutSubmitState: CheckoutSubmitState
   checkoutError: string | null
+  fieldErrors: Partial<Record<keyof CheckoutForm, string>>
   createdOrderId: string | null
   checkoutSuccessSnapshot: CheckoutSuccessSnapshot | null
   telegramUserLabel: string
@@ -83,6 +84,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   const [checkoutSubmitState, setCheckoutSubmitState] =
     useState<CheckoutSubmitState>('idle')
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof CheckoutForm, string>>>({})
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(initialOrderId)
   const [checkoutSuccessSnapshot, setCheckoutSuccessSnapshot] =
     useState<CheckoutSuccessSnapshot | null>(initialSuccessSnapshot)
@@ -116,6 +118,17 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   }, [telegramUserLabel, user])
 
   function handleCheckoutFieldChange(field: keyof CheckoutForm, value: string) {
+    // Clear field-level error when user edits the field
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev
+      const next = { ...prev }
+      delete next[field]
+      if (Object.keys(next).length === 0) {
+        setCheckoutError(null)
+      }
+      return next
+    })
+
     setCheckoutForm((currentForm) => {
       if (field === 'fulfillmentType' && value === 'delivery') {
         return {
@@ -165,6 +178,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
     setCheckoutSubmitted(false)
     setCheckoutSubmitState('idle')
     setCheckoutError(null)
+    setFieldErrors({})
     setCreatedOrderId(null)
     setCheckoutSuccessSnapshot(null)
     clearPromo()
@@ -197,19 +211,32 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
       return
     }
 
+    // Collect field-level errors first so user sees all issues at once
+    const nextFieldErrors: Partial<Record<keyof CheckoutForm, string>> = {}
+
     if (checkoutForm.fulfillmentType === 'delivery') {
-      if (!checkoutForm.deliveryCity.trim() || !checkoutForm.deliveryAddress.trim()) {
-        setCheckoutError('Delivery city and address are required.')
-        return
+      if (!checkoutForm.deliveryCity.trim()) {
+        nextFieldErrors.deliveryCity = 'City is required.'
+      }
+      if (!checkoutForm.deliveryAddress.trim()) {
+        nextFieldErrors.deliveryAddress = 'Address is required.'
       }
     }
 
     if (checkoutForm.fulfillmentType === 'meetup') {
-      if (!checkoutForm.meetupLocation || !checkoutForm.meetupTimeOption) {
-        setCheckoutError('Select a meetup location and time option.')
-        return
+      if (!checkoutForm.meetupLocation) {
+        nextFieldErrors.meetupLocation = 'Select a meetup location.'
       }
+      // meetupTimeOption is optional per UI — user can specify in notes
     }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors)
+      setCheckoutError('Fix the highlighted fields below.')
+      return
+    }
+
+    setFieldErrors({})
 
     if (hasPendingPromoCode) {
       setCheckoutError('Apply the promo code first, or clear it before checkout.')
@@ -244,6 +271,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
       })
 
       setCheckoutError(null)
+      setFieldErrors({})
       setCreatedOrderId(orderId)
       setCheckoutSuccessSnapshot({
         items: cartItems.map((item) => ({ ...item })),
@@ -282,6 +310,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
     checkoutSubmitted,
     checkoutSubmitState,
     checkoutError,
+    fieldErrors,
     createdOrderId,
     checkoutSuccessSnapshot,
     telegramUserLabel,

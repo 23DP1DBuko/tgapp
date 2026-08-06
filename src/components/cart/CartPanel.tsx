@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { animate, motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
+import { animate, motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react'
 
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import { SwipeablePanel } from '../ui/SwipeablePanel'

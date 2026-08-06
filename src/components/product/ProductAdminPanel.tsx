@@ -17,6 +17,7 @@ import {
 } from '../../lib/firebase/storage'
 import { classifyAdminError, formatAdminErrorMessage, type AdminErrorKind } from '../../lib/retry'
 import { CustomSelect } from '../ui/CustomSelect'
+import { Input } from '../ui/Input'
 
 type ProductAdminPanelProps = {
   initData: string
@@ -500,12 +501,13 @@ export function ProductAdminPanel({
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Product Name
           </span>
-          <input
+          <Input
+            size="md"
+            focusColor="red"
             value={form.name}
             onChange={(event) =>
               setForm((current) => ({ ...current, name: event.target.value }))
             }
-            className={inputClassName}
             placeholder="YungWear Heavyweight Hoodie"
           />
         </label>
@@ -514,15 +516,18 @@ export function ProductAdminPanel({
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Description
           </span>
-          <textarea
+          <Input
+            size="md"
+            focusColor="red"
+            multiline
             value={form.description}
             onChange={(event) => {
               setForm((current) => ({ ...current, description: event.target.value }))
               event.target.style.height = 'auto'
               event.target.style.height = `${event.target.scrollHeight}px`
             }}
-            className={`${inputClassName} min-h-24 resize-none overflow-hidden`}
             placeholder="Oversized hoodie for the first drop."
+            className="resize-none overflow-hidden"
           />
         </label>
 
@@ -550,12 +555,13 @@ export function ProductAdminPanel({
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
               Price EUR
             </span>
-            <input
+            <Input
+              size="md"
+              focusColor="red"
               value={form.price}
               onChange={(event) =>
                 setForm((current) => ({ ...current, price: event.target.value }))
               }
-              className={inputClassName}
               inputMode="decimal"
               placeholder="120"
             />
@@ -566,12 +572,13 @@ export function ProductAdminPanel({
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Brands
           </span>
-          <input
+          <Input
+            size="md"
+            focusColor="red"
             value={form.brandNames}
             onChange={(event) =>
               setForm((current) => ({ ...current, brandNames: event.target.value }))
             }
-            className={inputClassName}
             placeholder="YungWear, Capsule Line"
           />
         </label>
@@ -635,12 +642,13 @@ export function ProductAdminPanel({
           <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
             Limited Label
           </span>
-          <input
+          <Input
+            size="md"
+            focusColor="red"
             value={form.isLimitedLabel}
             onChange={(event) =>
               setForm((current) => ({ ...current, isLimitedLabel: event.target.value }))
             }
-            className={inputClassName}
             placeholder="Limited Drop"
           />
         </label>
@@ -703,26 +711,28 @@ export function ProductAdminPanel({
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
                 Early Access Start
               </span>
-              <input
+              <Input
+                size="md"
+                focusColor="red"
                 type="datetime-local"
                 value={form.earlyAccessAt}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, earlyAccessAt: event.target.value }))
                 }
-                className={inputClassName}
               />
             </label>
             <label className="block">
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
                 Public Release
               </span>
-              <input
+              <Input
+                size="md"
+                focusColor="red"
                 type="datetime-local"
                 value={form.publicAt}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, publicAt: event.target.value }))
                 }
-                className={inputClassName}
               />
             </label>
             <p className="text-[10px] leading-relaxed text-stone-500">
@@ -795,9 +805,6 @@ export function ProductAdminPanel({
     </article>
   )
 }
-
-const inputClassName =
-  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-red)]'
 
 type PendingImageCardProps = {
   item: GalleryItem

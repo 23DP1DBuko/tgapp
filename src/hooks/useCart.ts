@@ -94,26 +94,17 @@ export function useCart(options: UseCartOptions): UseCartResult {
       ]
     })
 
+    // Fire-and-forget: update backend cart counter. If it fails, the local add stays.
+    // The local cart is the source of truth; the counter is just a popularity signal.
     try {
       await updateProductCartCount(initData, product.id, 1)
-    } catch (error) {
-      setCartItems((currentItems) =>
-        currentItems.filter((item) => item.productId !== product.id),
-      )
-      reportError(
-        error instanceof Error ? error.message : 'Failed to update cart count.',
-      )
+    } catch {
+      // Silently fail — local add already happened
     }
   }
 
   async function handleRemoveFromCart(productId: string) {
     if (!requireTelegramAccess('Cart actions')) {
-      return
-    }
-
-    const itemToRemove = cartItems.find((item) => item.productId === productId)
-
-    if (!itemToRemove) {
       return
     }
 
@@ -125,13 +116,12 @@ export function useCart(options: UseCartOptions): UseCartResult {
       return
     }
 
+    // Fire-and-forget: update backend cart counter. If it fails, we don't roll back
+    // because the local cart is the source of truth. The counter is a popularity signal.
     try {
       await updateProductCartCount(initData, productId, -1)
-    } catch (error) {
-      setCartItems((currentItems) => [...currentItems, itemToRemove])
-      reportError(
-        error instanceof Error ? error.message : 'Failed to update cart count.',
-      )
+    } catch {
+      // Silently fail — local removal already happened
     }
   }
 

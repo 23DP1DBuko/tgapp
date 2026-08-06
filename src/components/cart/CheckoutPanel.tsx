@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { triggerHapticNotification } from '../../lib/telegram/webApp'
+import { Button } from '../ui/Button'
 import { SwipeablePanel } from '../ui/SwipeablePanel'
 import type { AppliedPromo } from '../../types/promo'
 import type {
@@ -26,6 +27,7 @@ const TIME_OPTIONS = [
 type CheckoutPanelProps = {
   items: CartItem[]
   form: CheckoutForm
+  fieldErrors: Partial<Record<keyof CheckoutForm, string>>
   telegramUserLabel: string
   telegramContactHint: string
   errorMessage: string | null
@@ -40,6 +42,7 @@ type CheckoutPanelProps = {
   onChangeForm: (field: keyof CheckoutForm, value: string) => void
   onApplyPromo: () => void
   onSubmit: () => void
+  onRemoveItem: (productId: string) => void
   onViewOrders: () => void
   onBackToCatalog: () => void
   onOpenPrivacy: () => void
@@ -51,6 +54,7 @@ type CheckoutPanelProps = {
 export function CheckoutPanel({
   items,
   form,
+  fieldErrors = {},
   telegramUserLabel,
   telegramContactHint,
   errorMessage,
@@ -65,6 +69,7 @@ export function CheckoutPanel({
   onChangeForm,
   onApplyPromo,
   onSubmit,
+  onRemoveItem,
   onViewOrders,
   onBackToCatalog,
   onOpenPrivacy,
@@ -110,6 +115,10 @@ export function CheckoutPanel({
   const [timeDropdownOpen, setTimeDropdownOpen] = useState(false)
   const meetupDropdownRef = useRef<HTMLDivElement>(null)
   const timeDropdownRef = useRef<HTMLDivElement>(null)
+  const meetupTriggerRef = useRef<HTMLButtonElement>(null)
+  const timeTriggerRef = useRef<HTMLButtonElement>(null)
+  const meetupOptionRefs = useRef<HTMLButtonElement[]>([])
+  const timeOptionRefs = useRef<HTMLButtonElement[]>([])
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -134,6 +143,26 @@ export function CheckoutPanel({
   useEffect(() => {
     setTimeDropdownOpen(false)
   }, [form.meetupTimeOption])
+
+  // Auto-focus first option when meetup dropdown opens
+  useEffect(() => {
+    if (meetupDropdownOpen && meetupOptionRefs.current.length > 0) {
+      meetupOptionRefs.current[0]?.focus()
+    }
+    if (!meetupDropdownOpen) {
+      meetupTriggerRef.current?.focus()
+    }
+  }, [meetupDropdownOpen])
+
+  // Auto-focus first option when time dropdown opens
+  useEffect(() => {
+    if (timeDropdownOpen && timeOptionRefs.current.length > 0) {
+      timeOptionRefs.current[0]?.focus()
+    }
+    if (!timeDropdownOpen) {
+      timeTriggerRef.current?.focus()
+    }
+  }, [timeDropdownOpen])
 
   // Trigger success haptic once when order is first submitted
   const prevSubmittedRef = useRef(false)
@@ -194,6 +223,21 @@ export function CheckoutPanel({
       onCheckoutStepChange(checkoutStep - 1)
     }
   }, [checkoutStep, onCheckoutStepChange])
+
+  // ── Field-level error helpers ──
+
+  function fieldClass(field: keyof CheckoutForm): string {
+    const hasError = fieldErrors[field]
+    return 'w-full rounded-2xl border bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-500/80' +
+      (hasError ? ' border-[var(--shop-red)]' : ' border-white/10') +
+      ' focus:border-[var(--shop-red)]'
+  }
+
+  function inlineFieldError(field: keyof CheckoutForm) {
+    const message = fieldErrors[field]
+    if (!message) return null
+    return <p className="mt-1.5 text-[11px] font-medium text-[var(--shop-red)]">{message}</p>
+  }
 
   // ── Label helpers ──
 
@@ -448,10 +492,11 @@ export function CheckoutPanel({
             <input
               value={form.fullName}
               onChange={(e) => onChangeForm('fullName', e.target.value)}
-              className={inputClassName}
+              className={fieldClass('fullName')}
               placeholder="Your name"
               autoComplete="name"
             />
+            {inlineFieldError('fullName')}
           </label>
 
           <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
@@ -480,22 +525,13 @@ export function CheckoutPanel({
 
           <div className="flex gap-3 pt-2">
             {checkoutStep > 1 && (
-              <button
-                type="button"
-                onClick={handleGoToPrevStep}
-                className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
-              >
+              <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
                 ← Back
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              onClick={handleGoToNextStep}
-              disabled={isNextDisabled1}
-              className="flex-1 rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-            >
+            <Button variant="primary" size="md" disabled={isNextDisabled1} onClick={handleGoToNextStep} className="flex-1">
               Next →
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -550,9 +586,10 @@ export function CheckoutPanel({
                 <input
                   value={form.deliveryCity}
                   onChange={(e) => onChangeForm('deliveryCity', e.target.value)}
-                  className={inputClassName}
+                  className={fieldClass('deliveryCity')}
                   placeholder="Riga"
                 />
+                {inlineFieldError('deliveryCity')}
               </label>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
@@ -561,9 +598,10 @@ export function CheckoutPanel({
                 <input
                   value={form.deliveryAddress}
                   onChange={(e) => onChangeForm('deliveryAddress', e.target.value)}
-                  className={inputClassName}
+                  className={fieldClass('deliveryAddress')}
                   placeholder="Street, house, apartment"
                 />
+                {inlineFieldError('deliveryAddress')}
               </label>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
@@ -587,12 +625,27 @@ export function CheckoutPanel({
                 </span>
                 <div className="relative" ref={meetupDropdownRef}>
                   <button
+                    ref={meetupTriggerRef}
                     type="button"
                     onClick={() => setMeetupDropdownOpen((prev) => !prev)}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        setMeetupDropdownOpen(true)
+                      }
+                      if (e.key === 'Escape') {
+                        setMeetupDropdownOpen(false)
+                      }
+                      // Enter/Space handled natively by onClick on <button>
+                    }}
+                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/40 ${
                       form.meetupLocation
-                        ? 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
-                        : 'border-white/10 bg-white/6 text-zinc-500'
+                        ? fieldErrors?.meetupLocation
+                          ? 'border-[var(--shop-red)] bg-white/8 text-[var(--shop-cream)]'
+                          : 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
+                        : fieldErrors?.meetupLocation
+                          ? 'border-[var(--shop-red)] bg-white/6 text-zinc-500'
+                          : 'border-white/10 bg-white/6 text-zinc-500'
                     }`}
                   >
                     <span>
@@ -600,7 +653,7 @@ export function CheckoutPanel({
                         ? isCustomLocation && form.deliveryAddress
                           ? form.deliveryAddress
                           : selectedLocationLabel
-                        : 'Select a meetup location'}
+                        : fieldErrors?.meetupLocation ? 'Select a meetup location' : 'Select a meetup location'}
                     </span>
                     <svg
                       viewBox="0 0 24 24"
@@ -618,12 +671,50 @@ export function CheckoutPanel({
 
                   {meetupDropdownOpen && (
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
-                      {MEETUP_LOCATIONS.map((loc) => (
+                      {MEETUP_LOCATIONS.map((loc, index) => (
                         <button
                           key={loc.value}
+                          ref={(el) => {
+                            if (el) meetupOptionRefs.current[index] = el
+                          }}
                           type="button"
-                          onClick={() => onChangeForm('meetupLocation', loc.value)}
-                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 ${
+                          onClick={() => {
+                            onChangeForm('meetupLocation', loc.value)
+                            setMeetupDropdownOpen(false)
+                            meetupTriggerRef.current?.focus()
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              const next = index + 1
+                              if (next < MEETUP_LOCATIONS.length) {
+                                meetupOptionRefs.current[next]?.focus()
+                              } else {
+                                meetupOptionRefs.current[0]?.focus()
+                              }
+                            }
+                            if (e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              const prev = index - 1
+                              if (prev >= 0) {
+                                meetupOptionRefs.current[prev]?.focus()
+                              } else {
+                                meetupTriggerRef.current?.focus()
+                              }
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              setMeetupDropdownOpen(false)
+                              meetupTriggerRef.current?.focus()
+                            }
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              onChangeForm('meetupLocation', loc.value)
+                              setMeetupDropdownOpen(false)
+                              meetupTriggerRef.current?.focus()
+                            }
+                          }}
+                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--shop-purple)]/40 ${
                             form.meetupLocation === loc.value
                               ? 'bg-white/10 text-[var(--shop-cream)]'
                               : 'text-zinc-400'
@@ -644,6 +735,7 @@ export function CheckoutPanel({
                     </div>
                   )}
                 </div>
+                {inlineFieldError('meetupLocation')}
               </label>
 
               {/* Custom location text input (shown when "Other Location" is selected) */}
@@ -669,9 +761,20 @@ export function CheckoutPanel({
                 </span>
                 <div className="relative" ref={timeDropdownRef}>
                   <button
+                    ref={timeTriggerRef}
                     type="button"
                     onClick={() => setTimeDropdownOpen((prev) => !prev)}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        setTimeDropdownOpen(true)
+                      }
+                      if (e.key === 'Escape') {
+                        setTimeDropdownOpen(false)
+                      }
+                      // Enter/Space handled natively by onClick on <button>
+                    }}
+                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/40 ${
                       form.meetupTimeOption
                         ? 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
                         : 'border-white/10 bg-white/6 text-zinc-500'
@@ -696,12 +799,50 @@ export function CheckoutPanel({
 
                   {timeDropdownOpen && (
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
-                      {TIME_OPTIONS.map((opt) => (
+                      {TIME_OPTIONS.map((opt, index) => (
                         <button
                           key={opt.value}
+                          ref={(el) => {
+                            if (el) timeOptionRefs.current[index] = el
+                          }}
                           type="button"
-                          onClick={() => onChangeForm('meetupTimeOption', opt.value)}
-                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 ${
+                          onClick={() => {
+                            onChangeForm('meetupTimeOption', opt.value)
+                            setTimeDropdownOpen(false)
+                            timeTriggerRef.current?.focus()
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              const next = index + 1
+                              if (next < TIME_OPTIONS.length) {
+                                timeOptionRefs.current[next]?.focus()
+                              } else {
+                                timeOptionRefs.current[0]?.focus()
+                              }
+                            }
+                            if (e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              const prev = index - 1
+                              if (prev >= 0) {
+                                timeOptionRefs.current[prev]?.focus()
+                              } else {
+                                timeTriggerRef.current?.focus()
+                              }
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              setTimeDropdownOpen(false)
+                              timeTriggerRef.current?.focus()
+                            }
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              onChangeForm('meetupTimeOption', opt.value)
+                              setTimeDropdownOpen(false)
+                              timeTriggerRef.current?.focus()
+                            }
+                          }}
+                          className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--shop-purple)]/40 ${
                             form.meetupTimeOption === opt.value
                               ? 'bg-white/10 text-[var(--shop-cream)]'
                               : 'text-zinc-400'
@@ -744,21 +885,12 @@ export function CheckoutPanel({
           )}
 
           <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={handleGoToPrevStep}
-              className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
-            >
+            <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
               ← Back
-            </button>
-            <button
-              type="button"
-              onClick={handleGoToNextStep}
-              disabled={isNextDisabled2}
-              className="flex-1 rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-            >
+            </Button>
+            <Button variant="primary" size="md" disabled={isNextDisabled2} onClick={handleGoToNextStep} className="flex-1">
               Next →
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -823,14 +955,15 @@ export function CheckoutPanel({
                   placeholder="DROP10"
                 />
               </label>
-              <button
-                type="button"
-                onClick={onApplyPromo}
+              <Button
+                variant="secondary"
+                size="md"
                 disabled={isApplyingPromo || isSubmitting}
-                className="rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onApplyPromo}
+                className="font-semibold tracking-[0.16em]"
               >
                 {isApplyingPromo ? 'Applying...' : 'Apply'}
-              </button>
+              </Button>
             </div>
 
             {promoFeedback ? (
@@ -873,6 +1006,18 @@ export function CheckoutPanel({
                 <span className="shrink-0 text-sm font-semibold text-[var(--shop-cream)]">
                   {item.price} {item.currency}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveItem(item.productId)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-[var(--shop-red)]/20 hover:text-[var(--shop-red)] active:scale-90"
+                  aria-label={`Remove ${item.name} from cart`}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+                    <g transform="translate(2, 2)">
+                      <path fillRule="evenodd" d="M16.5 4.5l-13 13M3.5 4.5l13 13" clipRule="evenodd" />
+                    </g>
+                  </svg>
+                </button>
               </div>
             ))}
           </div>
@@ -957,21 +1102,19 @@ export function CheckoutPanel({
 
           {/* Action buttons */}
           <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={handleGoToPrevStep}
-              className="flex-1 rounded-2xl border border-white/10 bg-white/8 px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-[var(--shop-cream)] transition-all active:scale-[0.98]"
-            >
+            <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
               ← Back
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
               disabled={hasPendingPromoCode || isSubmitting}
-              className="flex-[2] rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_16px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+              loading={isSubmitting}
+              onClick={onSubmit}
+              className="flex-[2]"
             >
               {isSubmitting ? 'Sending Order Request...' : 'Send Order Request'}
-            </button>
+            </Button>
           </div>
         </div>
       )}

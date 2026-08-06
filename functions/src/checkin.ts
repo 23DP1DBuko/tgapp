@@ -79,6 +79,7 @@ async function getCheckinState(telegramUserId: number): Promise<{
   const snapshot = await docRef.get()
 
   const today = getTodayDateString()
+  const yesterday = getYesterdayDateString()
 
   if (!snapshot.exists) {
     return {
@@ -98,13 +99,25 @@ async function getCheckinState(telegramUserId: number): Promise<{
   } | undefined
 
   const lastCheckInDate = data?.lastCheckInDate ?? ''
+  const todayCheckedIn = lastCheckInDate === today
+
+  // Detect broken streak: last check-in was before yesterday
+  // If the user missed a day, the streak is 0
+  let currentStreak = data?.currentStreak ?? 0
+  const isStreakBroken = !todayCheckedIn && lastCheckInDate !== '' && lastCheckInDate !== yesterday
+
+  if (isStreakBroken) {
+    currentStreak = 0
+    // Persist the reset so subsequent reads are accurate
+    await docRef.set({ currentStreak: 0 }, { merge: true })
+  }
 
   return {
-    currentStreak: data?.currentStreak ?? 0,
+    currentStreak,
     longestStreak: data?.longestStreak ?? 0,
     totalCheckIns: data?.totalCheckIns ?? 0,
     lastCheckInDate,
-    todayCheckedIn: lastCheckInDate === today,
+    todayCheckedIn,
   }
 }
 

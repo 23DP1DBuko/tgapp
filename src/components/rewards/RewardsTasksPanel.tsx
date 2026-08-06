@@ -740,56 +740,6 @@ export function RewardsTasksPanel({
                 />
               </button>
             </div>
-
-            {/* Leaderboard */}
-            {leaderboardEntries.length > 0 ? (
-              <div className="mt-4">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Top Referrers
-                </p>
-                <div className="space-y-1.5">
-                  {leaderboardEntries.map((entry) => {
-                    const isMe = entry.telegramUserId === referralInfo?.telegramUserId
-                    return (
-                      <div
-                        key={entry.telegramUserId}
-                        className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
-                          isMe ? 'border border-[var(--shop-purple)]/30 bg-[var(--shop-purple)]/8' : 'bg-white/6'
-                        }`}
-                      >
-                        <span className={`w-5 text-center text-xs font-bold ${
-                          entry.rank === 1 ? 'text-amber-400' : entry.rank === 2 ? 'text-zinc-300' : entry.rank === 3 ? 'text-amber-700' : 'text-[var(--shop-muted)]'
-                        }`}>
-                          {entry.rank}
-                        </span>
-                        <span className="min-w-0 flex-1 text-sm font-medium text-[var(--shop-cream)]">
-                          {entry.username
-                            ? `@${entry.username}`
-                            : `User #${entry.telegramUserId}`}
-                          {isMe && (
-                            <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
-                              You
-                            </span>
-                          )}
-                        </span>
-                        <span className="shrink-0 text-xs font-semibold text-[var(--shop-muted)]">
-                          {entry.referralCount} {entry.referralCount === 1 ? 'ref' : 'refs'}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-                {myLeaderboardRank !== null && !leaderboardEntries.some((e) => e.telegramUserId === referralInfo?.telegramUserId) && (
-                  <div className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                    Your rank: #{myLeaderboardRank} ({referralCount} referrals)
-                  </div>
-                )}
-              </div>
-            ) : !leaderboardLoading ? (
-              <div className="mt-5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                Be the first to invite friends!
-              </div>
-            ) : null}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-white/8 px-6 py-12 text-center">
@@ -801,6 +751,87 @@ export function RewardsTasksPanel({
             </div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-zinc-300">
               Open the app in Telegram to generate your link.
+            </p>
+          </div>
+        )}
+      </article>
+
+      {/* ── STACK C.5: Referral Leaderboard ── */}
+      <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.96),rgba(18,10,24,0.98))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+            Top Referrers
+          </p>
+          <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
+            {leaderboardEntries.length > 0 ? `${leaderboardEntries.length} Leader${leaderboardEntries.length === 1 ? '' : 's'}` : 'Ranking'}
+          </span>
+        </div>
+
+        <p className="mt-2 text-xs leading-5 text-zinc-400">
+          The most influential community members. Invite friends to climb the ranks.
+        </p>
+
+        {leaderboardLoading ? (
+          <div className="mt-4 space-y-2">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-12 animate-pulse rounded-xl bg-white/8" />
+            ))}
+          </div>
+        ) : leaderboardEntries.length > 0 ? (
+          <div className="mt-4 space-y-1.5">
+            {leaderboardEntries.map((entry) => {
+              const isMe = entry.telegramUserId === referralInfo?.telegramUserId
+              return (
+                <div
+                  key={entry.telegramUserId}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
+                    isMe ? 'border border-[var(--shop-purple)]/30 bg-[var(--shop-purple)]/8' : 'bg-white/6'
+                  }`}
+                >
+                  <span className={`w-5 text-center text-xs font-bold ${
+                    entry.rank === 1 ? 'text-amber-400' : entry.rank === 2 ? 'text-zinc-300' : entry.rank === 3 ? 'text-amber-700' : 'text-[var(--shop-muted)]'
+                  }`}>
+                    {entry.rank}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm font-medium text-[var(--shop-cream)]">
+                    {entry.username
+                      ? `@${entry.username}`
+                      : `User #${entry.telegramUserId}`}
+                    {isMe && (
+                      <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
+                        You
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-xs font-semibold text-[var(--shop-muted)]">
+                    {entry.referralCount} {entry.referralCount === 1 ? 'ref' : 'refs'}
+                  </span>
+                </div>
+              )
+            })}
+            {myLeaderboardRank !== null && !leaderboardEntries.some((e) => e.telegramUserId === referralInfo?.telegramUserId) && (
+              <div className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                Your rank: #{myLeaderboardRank} ({referralCount} referrals)
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-6 flex flex-col items-center justify-center rounded-2xl bg-white/8 px-6 py-10 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/6">
+              <svg viewBox="0 0 24 24" className="h-7 w-7 shrink-0 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 9H4.5a2.5 2.5 0 010-5C7 4 6 9 6 9z" />
+                <path d="M18 9h1.5a2.5 2.5 0 000-5C17 4 18 9 18 9z" />
+                <path d="M4 22h16" />
+                <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+                <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+                <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+              </svg>
+            </div>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-zinc-300">
+              No referrers yet.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              Share your referral link to start climbing the ranks.
             </p>
           </div>
         )}

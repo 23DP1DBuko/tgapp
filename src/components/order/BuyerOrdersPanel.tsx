@@ -93,7 +93,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
   )
 
   return (
-    <div className="animate-[fade-slide-in_0.4s_ease-out_backwards]">
+    <div className="animate-[fade-slide-in_0.4s_ease-out_backwards] space-y-4">
       <PageHeader label="Catalog" onClick={onBack} />
       <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
         <div className="flex items-start justify-between gap-4">
