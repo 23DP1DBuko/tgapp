@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { motion, AnimatePresence } from 'motion/react'
 
@@ -6,11 +6,18 @@ import {
   joinGiveaway,
   completeGiveawayTask,
   getGiveawayEntries,
-  getMyGiveawayEntry,
+  invalidateGiveawayEntriesCache,
 } from '../../lib/firebase/giveaways'
-import { triggerHapticFeedback, triggerHapticNotification } from '../../lib/telegram/webApp'
+import {
+  openExternalLink,
+  triggerHapticFeedback,
+  triggerHapticNotification,
+} from '../../lib/telegram/webApp'
 import { BottomSheet } from '../ui/BottomSheet'
-import type { Giveaway, GiveawayEntry, EntryTask } from '../../types/rewards'
+import { useI18n } from '../../lib/i18n'
+import { pickPlural } from '../../lib/i18n/translate'
+import type { TranslateFn } from '../../lib/i18n/translations'
+import type { Giveaway, GiveawayEntry, GiveawayLeaderboardEntry, EntryTask } from '../../types/rewards'
 
 type BuyerGiveawayDetailSheetProps = {
   isOpen: boolean
@@ -23,12 +30,44 @@ type BuyerGiveawayDetailSheetProps = {
 const GIVEAWAY_DEFAULT_IMAGE =
   'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=400&q=80'
 
+// ── Pending-verify marker (sessionStorage) ──
+// When a task opens an external link, Telegram may suspend the webview OR
+// fully reload it. The marker covers both: the in-memory ref handles the
+// suspended case (visibilitychange/focus fires on return), sessionStorage
+// survives a full reload and is restored when the sheet reopens. Format:
+// `<giveawayId>:<taskId>`.
+const PENDING_VERIFY_STORAGE_KEY = 'yungwear-pending-task-verify'
+
+function readPendingVerify(): string | null {
+  try {
+    return sessionStorage.getItem(PENDING_VERIFY_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writePendingVerify(marker: string): void {
+  try {
+    sessionStorage.setItem(PENDING_VERIFY_STORAGE_KEY, marker)
+  } catch {
+    // Ignore — the in-memory ref still covers the suspended-webview case.
+  }
+}
+
+function clearPendingVerify(): void {
+  try {
+    sessionStorage.removeItem(PENDING_VERIFY_STORAGE_KEY)
+  } catch {
+    // Ignore
+  }
+}
+
 type CountdownUnit = {
   label: string
   value: number
 }
 
-function computeCountdown(endsAt: string | null): CountdownUnit[] | null {
+function computeCountdown(endsAt: string | null, t: TranslateFn): CountdownUnit[] | null {
   if (!endsAt) return null
   const diff = new Date(endsAt).getTime() - Date.now()
   if (diff <= 0) return null
@@ -39,10 +78,10 @@ function computeCountdown(endsAt: string | null): CountdownUnit[] | null {
   const seconds = Math.floor((diff / 1000) % 60)
 
   return [
-    { label: 'Days', value: days },
-    { label: 'Hours', value: hours },
-    { label: 'Mins', value: minutes },
-    { label: 'Secs', value: seconds },
+    { label: t('cd.days'), value: days },
+    { label: t('cd.hours'), value: hours },
+    { label: t('cd.mins'), value: minutes },
+    { label: t('cd.secs'), value: seconds },
   ]
 }
 
@@ -53,9 +92,10 @@ export function BuyerGiveawayDetailSheet({
   onClose,
   onEntryChanged,
 }: BuyerGiveawayDetailSheetProps) {
+  const { t } = useI18n()
   // ── Local state ──
   const [myEntry, setMyEntry] = useState<GiveawayEntry | null>(null)
-  const [entries, setEntries] = useState<GiveawayEntry[]>([])
+  const [entries, setEntries] = useState<GiveawayLeaderboardEntry[]>([])
   const [totalParticipants, setTotalParticipants] = useState(0)
   const [isJoining, setIsJoining] = useState(false)
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null)
@@ -76,32 +116,23 @@ export function BuyerGiveawayDetailSheet({
     return () => clearTimeout(timer)
   }, [joinResultText])
 
-  // ── Fetch entries when sheet opens or entry changes ──
-  // Uses a two-step approach:
-  // 1. Fast targeted query (by userId) to get the user's entry immediately
-  // 2. Full entries fetch for leaderboard (less frequent)
+  // ── Fetch entries when sheet opens ──
+  // One round-trip: getGiveawayEntries returns both the leaderboard and the
+  // current user's entry, and a short-lived cache serves it instantly when the
+  // sheet is reopened. Join/task completion invalidate that cache before
+  // refetching, so the refreshed data is always authoritative.
   useEffect(() => {
     if (!isOpen || !giveaway || !initData) return
     const g = giveaway
 
     let cancelled = false
     async function load() {
-      // Step 1: Fast lightweight check — only the current user's entry
-      try {
-        const result = await getMyGiveawayEntry(initData, g.id)
-        if (!cancelled) {
-          setMyEntry(result.entry)
-        }
-      } catch {
-        // Will fall through to full entries fetch
-      }
-
-      // Step 2: Full entries fetch for leaderboard data
       try {
         const result = await getGiveawayEntries(initData, g.id)
         if (cancelled) return
         setEntries(result.entries)
         setTotalParticipants(result.totalParticipants)
+        setMyEntry(result.myEntry)
       } catch {
         // Silently fail
       }
@@ -127,16 +158,14 @@ export function BuyerGiveawayDetailSheet({
     : 0
 
   const myRank = useMemo(() => {
-    const idx = sortedEntries.findIndex(
-      (e) => e.telegramUserId === myEntry?.telegramUserId,
-    )
+    const idx = sortedEntries.findIndex((e) => e.isMe)
     return idx >= 0 ? idx + 1 : null
-  }, [sortedEntries, myEntry?.telegramUserId])
+  }, [sortedEntries])
 
   const countdown = useMemo(
-    () => computeCountdown(giveaway?.endAt ?? null),
+    () => computeCountdown(giveaway?.endAt ?? null, t),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [giveaway?.endAt, now],
+    [giveaway?.endAt, now, t],
   )
 
   const hasEnded = giveaway?.status === 'finished' || giveaway?.status === 'announced' || (!!giveaway?.endAt && !countdown)
@@ -153,56 +182,204 @@ export function BuyerGiveawayDetailSheet({
       const result = await joinGiveaway(initData, giveaway.id)
       if (result.joined) {
         triggerHapticNotification('success')
-        setJoinResultText(`Joined! You have ${result.totalTickets} ticket${result.totalTickets !== 1 ? 's' : ''}.`)
-        // Refresh entries
+        setJoinResultText(t('gd.joinedMsg', {
+          n: result.totalTickets,
+          tickets: pickPlural(result.totalTickets, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany'),
+        }))
+        // Refresh entries (invalidate cache first so the fresh join is shown)
+        invalidateGiveawayEntriesCache(giveaway.id)
         const refreshed = await getGiveawayEntries(initData, giveaway.id)
         setMyEntry(refreshed.myEntry)
         setEntries(refreshed.entries)
         setTotalParticipants(refreshed.totalParticipants)
         onEntryChanged?.()
       } else {
-        setJoinResultText(result.reason === 'already_entered' ? 'Already entered!' : `Could not join: ${result.reason}`)
+        setJoinResultText(
+          result.reason === 'already_joined'
+            ? t('gd.alreadyEntered')
+            : result.reason === 'giveaway_ended'
+              ? t('gd.giveawayEnded')
+              : result.reason === 'access_restricted'
+                ? t('gd.accessRestricted')
+                : t('gd.couldNotJoin', { reason: result.reason }),
+        )
       }
     } catch {
-      setJoinResultText('Failed to join giveaway.')
+      setJoinResultText(t('gd.joinFailed'))
     } finally {
       setIsJoining(false)
     }
-  }, [giveaway, initData, isJoining, onEntryChanged])
+  }, [giveaway, initData, isJoining, onEntryChanged, t])
 
   // ── Complete a task ──
+  // Returns the outcome so handleTaskAction can decide what to do next
+  // (e.g. open the channel link after a 'not_member' failure). The server is
+  // authoritative and reports WHY verification failed via `detail`, so the
+  // specific message shows even when this client's view of the giveaway doc
+  // is stale.
   const handleCompleteTask = useCallback(
-    async (taskId: string) => {
-      if (!giveaway || !initData || completingTaskId !== null) return
-      if (isTaskCompleted(taskId)) return
+    async (taskId: string): Promise<{ completed: boolean; detail?: string } | null> => {
+      if (!giveaway || !initData || completingTaskId !== null) return null
+      if (isTaskCompleted(taskId)) return null
+
       setCompletingTaskId(taskId)
       try {
         const result = await completeGiveawayTask(initData, giveaway.id, taskId)
         if (result.completed) {
           triggerHapticFeedback('medium')
-          setJoinResultText(`+${result.taskTicketsGranted} tickets earned!`)
-          // Refresh entries
+          setJoinResultText(t('gd.ticketsEarned', { n: result.taskTicketsGranted }))
+          // Refresh entries (invalidate cache first so the fresh grant is shown)
+          invalidateGiveawayEntriesCache(giveaway.id)
           const refreshed = await getGiveawayEntries(initData, giveaway.id)
           setMyEntry(refreshed.myEntry)
           setEntries(refreshed.entries)
           setTotalParticipants(refreshed.totalParticipants)
           onEntryChanged?.()
-        } else {
-          setJoinResultText(`Task not completed: ${result.reason}`)
+          return { completed: true }
         }
+
+        // Server-confirmed failure — surface the specific reason.
+        if (result.detail === 'need_more_likes') {
+          const threshold = result.requiredCount ?? 1
+          setJoinResultText(
+            t('gd.needMoreLikes', {
+              n: threshold,
+              word: pickPlural(threshold, 'gd.productOne', 'gd.productFew', 'gd.productMany'),
+            }),
+          )
+        } else if (result.detail === 'not_member') {
+          setJoinResultText(t('gd.notMember'))
+        } else if (result.detail === 'chat_missing') {
+          setJoinResultText(t('gd.chatMissing'))
+        } else if (result.detail === 'chat_unreachable') {
+          setJoinResultText(t('gd.chatUnreachable'))
+        } else {
+          setJoinResultText(
+            result.reason === 'verification_failed'
+              ? t('gd.taskVerificationFailed')
+              : result.reason === 'giveaway_ended'
+                ? t('gd.giveawayEnded')
+                : t('gd.taskNotCompleted', { reason: result.reason }),
+          )
+        }
+        return { completed: false, detail: result.detail }
       } catch {
-        setJoinResultText('Failed to complete task.')
+        setJoinResultText(t('gd.taskFailed'))
+        return { completed: false }
       } finally {
         setCompletingTaskId(null)
       }
     },
-    [giveaway, initData, completingTaskId, onEntryChanged],
+    [giveaway, initData, completingTaskId, onEntryChanged, t],
   )
 
   const isTaskCompleted = useCallback(
     (taskId: string) => myEntry?.completedTaskIds.includes(taskId) ?? false,
     [myEntry],
   )
+
+  // ── Single button action ──
+  // Channel tasks (bot-verifiable via getChatMember) VERIFY FIRST: already-
+  // joined users get tickets instantly without leaving the app (TM-11); only
+  // when the server confirms "not a member" do we open the channel and
+  // re-verify on return. Honor tasks with a link (Instagram/TikTok/etc.) open
+  // first then verify on return. Tasks without a link verify now.
+  const pendingVerifyTaskRef = useRef<string | null>(null)
+  const prevOpenRef = useRef(false)
+
+  const handleTaskAction = useCallback(
+    async (task: EntryTask) => {
+      const isChannel = task.type === 'join_channel'
+      const hasLink = !!task.metadata?.trim()
+
+      if (isChannel) {
+        const result = await handleCompleteTask(task.id)
+        if (result && !result.completed && result.detail === 'not_member' && hasLink) {
+          pendingVerifyTaskRef.current = task.id
+          writePendingVerify(`${giveaway?.id}:${task.id}`)
+          openExternalLink(task.metadata!.trim())
+        }
+        return
+      }
+
+      if (hasLink) {
+        pendingVerifyTaskRef.current = task.id
+        writePendingVerify(`${giveaway?.id}:${task.id}`)
+        const opened = openExternalLink(task.metadata!.trim())
+        if (!opened) {
+          // Couldn't open the link (e.g. popup blocked) — verify right away.
+          pendingVerifyTaskRef.current = null
+          clearPendingVerify()
+          void handleCompleteTask(task.id)
+        }
+        return
+      }
+
+      void handleCompleteTask(task.id)
+    },
+    [giveaway, handleCompleteTask],
+  )
+
+  // ── Single-button flow for link tasks (join channel / follow page) ──
+  // First click opens the link. When the user returns, the pending task is
+  // re-verified: bot-verified tasks (channels) are checked server-side,
+  // honor tasks (Instagram/TikTok etc.) grant on return. Non-link tasks
+  // (invite / like) verify immediately in handleTaskAction instead.
+  // Note: visibilitychange/focus are not 100% reliable across Telegram
+  // clients, but the sheet refetches myEntry on every open, so reopening the
+  // giveaway self-heals the completed state even if the event misses.
+  // The ref is NOT cleared in this effect's cleanup (the callback identity
+  // changes while a task verifies); a separate [isOpen]-only effect resets it.
+  useEffect(() => {
+    if (!isOpen) return
+    const onReturned = () => {
+      const taskId = pendingVerifyTaskRef.current
+      if (!taskId) return
+      pendingVerifyTaskRef.current = null
+      clearPendingVerify()
+      // Small delay so the restored webview is settled before the request.
+      window.setTimeout(() => {
+        void handleCompleteTask(taskId)
+      }, 350)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onReturned()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onVisibility)
+    }
+  }, [isOpen, handleCompleteTask])
+
+  // Restore a pending verification that survived a webview reload
+  // (sessionStorage) when the sheet opens, and drop the marker when it closes.
+  // Guarded by prevOpenRef so re-runs from callback identity changes never
+  // double-restore.
+  useEffect(() => {
+    if (isOpen) {
+      if (!prevOpenRef.current) {
+        const stored = readPendingVerify()
+        if (stored && giveaway) {
+          const separator = stored.indexOf(':')
+          const gid = separator >= 0 ? stored.slice(0, separator) : null
+          const taskId = separator >= 0 ? stored.slice(separator + 1) : null
+          if (gid === giveaway.id && taskId) {
+            window.setTimeout(() => {
+              pendingVerifyTaskRef.current = null
+              clearPendingVerify()
+              void handleCompleteTask(taskId)
+            }, 400)
+          }
+        }
+      }
+    } else {
+      pendingVerifyTaskRef.current = null
+      clearPendingVerify()
+    }
+    prevOpenRef.current = isOpen
+  }, [isOpen, giveaway, handleCompleteTask])
 
   const isEntered = myEntry !== null
   const hasAnyWinner = (giveaway?.winners?.length ?? 0) > 0
@@ -211,13 +388,18 @@ export function BuyerGiveawayDetailSheet({
   if (!giveaway) return null
 
   return (
-    <BottomSheet isOpen={isOpen} onClose={onClose} maxHeightPct={88}>
+    <BottomSheet
+      isOpen={isOpen}
+      onClose={onClose}
+      label={giveaway?.title || 'Giveaway'}
+      maxHeightPct={88}
+    >
       <div className="space-y-5 pb-10">
         {/* ── HEADER: Title + Status ── */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-xl font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
-              {giveaway.title || 'Giveaway'}
+              {giveaway.title || t('gd.giveaway')}
             </h2>
             {giveaway.description && (
               <p className="mt-1 text-sm leading-6 text-[var(--shop-muted)]">
@@ -232,7 +414,7 @@ export function BuyerGiveawayDetailSheet({
                 : 'bg-emerald-300/15 text-emerald-100'
             }`}
           >
-            {hasEnded ? 'Ended' : 'Live'}
+            {hasEnded ? t('gd.ended') : t('gd.live')}
           </span>
         </div>
 
@@ -256,7 +438,7 @@ export function BuyerGiveawayDetailSheet({
         ) : (
           <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 text-center">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              {hasAnyWinner ? 'Winners announced' : 'Giveaway ended'}
+              {hasAnyWinner ? t('gd.winnersAnnounced') : t('gd.giveawayEnded')}
             </p>
           </div>
         )}
@@ -277,7 +459,7 @@ export function BuyerGiveawayDetailSheet({
         {/* ── PRIZES ── */}
         <div>
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Prizes ({sortedPrizes.length})
+            {t('gd.prizes', { n: sortedPrizes.length })}
           </p>
           {sortedPrizes.length === 1 ? (
             <div className="overflow-hidden rounded-[20px] border border-white/10 bg-black/20">
@@ -290,10 +472,10 @@ export function BuyerGiveawayDetailSheet({
               />
               <div className="flex items-center justify-between px-4 py-3">
                 <p className="text-sm font-semibold text-[var(--shop-cream)]">
-                  {sortedPrizes[0].productName || 'Mystery Prize'}
+                  {sortedPrizes[0].productName || t('gd.mysteryPrize')}
                 </p>
                 <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-amber-400">
-                  1st Place
+                  {t('gd.place1')}
                 </span>
               </div>
             </div>
@@ -301,7 +483,13 @@ export function BuyerGiveawayDetailSheet({
             <div className="space-y-2">
               {sortedPrizes.map((prize) => {
                 const placeLabel =
-                  prize.place === 1 ? '1st' : prize.place === 2 ? '2nd' : prize.place === 3 ? '3rd' : `${prize.place}th`
+                  prize.place === 1
+                    ? t('gd.place1')
+                    : prize.place === 2
+                      ? t('gd.place2')
+                      : prize.place === 3
+                        ? t('gd.place3')
+                        : t('gd.placeN', { n: prize.place })
                 return (
                   <div
                     key={prize.place}
@@ -318,7 +506,7 @@ export function BuyerGiveawayDetailSheet({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-[var(--shop-cream)]">
-                        {prize.productName || 'Mystery Prize'}
+                        {prize.productName || t('gd.mysteryPrize')}
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full bg-amber-500/15 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-amber-400">
@@ -337,7 +525,7 @@ export function BuyerGiveawayDetailSheet({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Your Tickets
+                  {t('gd.yourTickets')}
                 </p>
                 <p className="mt-1 text-2xl font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
                   {myTickets}
@@ -345,7 +533,7 @@ export function BuyerGiveawayDetailSheet({
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Win Chance
+                  {t('gd.winChance')}
                 </p>
                 <p className="mt-1 text-lg font-bold tracking-[-0.03em] text-emerald-300">
                   {myChancePct < 0.01 && myTickets > 0
@@ -368,8 +556,8 @@ export function BuyerGiveawayDetailSheet({
             )}
 
             <div className="mt-3 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-              <span>{totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}</span>
-              {myRank !== null && <span>Rank #{myRank}</span>}
+              <span>{totalParticipants} {pickPlural(totalParticipants, 'gd.participantOne', 'gd.participantFew', 'gd.participantMany')}</span>
+              {myRank !== null && <span>{t('gd.rank', { n: myRank })}</span>}
             </div>
           </div>
         )}
@@ -378,7 +566,7 @@ export function BuyerGiveawayDetailSheet({
         {giveaway.entryTasks.length > 0 && !hasEnded && (
           <div>
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Boost Your Chances
+              {t('gd.boostChances')}
             </p>
             <div className="space-y-2">
               {giveaway.entryTasks.map((task: EntryTask) => {
@@ -423,34 +611,37 @@ export function BuyerGiveawayDetailSheet({
                       </p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
                         {isEntered
-                          ? `+${task.ticketsGranted} ticket${task.ticketsGranted !== 1 ? 's' : ''}`
-                          : 'Join first to unlock'}
+                          ? `+${task.ticketsGranted} ${pickPlural(task.ticketsGranted, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany')}`
+                          : t('gd.joinFirst')}
                       </p>
                     </div>
 
-                    {/* Action button */}
-                    {completed ? (
-                      <span className="shrink-0 rounded-lg bg-emerald-300/20 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100">
-                        ✓ Done
-                      </span>
-                    ) : isLoading ? (
-                      <span className="shrink-0 rounded-lg border border-white/10 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                        ...
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleCompleteTask(task.id)}
-                        disabled={!isEntered}
-                        className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] transition-all active:scale-95 ${
-                          isEntered
-                            ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                            : 'border border-white/10 bg-white/8 text-[var(--shop-muted)]'
-                        } disabled:cursor-not-allowed disabled:opacity-50`}
-                      >
-                        {isEntered ? 'Complete' : 'Locked'}
-                      </button>
-                    )}
+                    {/* Action area: single button — opens the link first when the
+                        task has one, then verifies on return; otherwise verifies now */}
+                    <div className="flex shrink-0 items-center">
+                      {completed ? (
+                        <span className="shrink-0 rounded-lg bg-emerald-300/20 px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-100">
+                          {t('rewards.done')}
+                        </span>
+                      ) : isLoading ? (
+                        <span className="shrink-0 rounded-lg border border-white/10 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                          ...
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleTaskAction(task)}
+                          disabled={!isEntered}
+                          className={`shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] transition-all active:scale-95 ${
+                            isEntered
+                              ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                              : 'border border-white/10 bg-white/8 text-[var(--shop-muted)]'
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        >
+                          {isEntered ? t('gd.complete') : t('gd.locked')}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
@@ -462,12 +653,18 @@ export function BuyerGiveawayDetailSheet({
         {hasAnyWinner && giveaway.winners ? (
           <div>
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Winners
+              {t('gd.winners')}
             </p>
             <div className="space-y-2">
               {giveaway.winners.map((winner) => {
                 const placeLabel =
-                  winner.place === 1 ? '1st' : winner.place === 2 ? '2nd' : winner.place === 3 ? '3rd' : `${winner.place}th`
+                  winner.place === 1
+                    ? t('gd.place1')
+                    : winner.place === 2
+                      ? t('gd.place2')
+                      : winner.place === 3
+                        ? t('gd.place3')
+                        : t('gd.placeN', { n: winner.place })
                 return (
                   <div
                     key={winner.place}
@@ -517,10 +714,13 @@ export function BuyerGiveawayDetailSheet({
             }`}
           >
             {isJoining
-              ? 'Joining...'
+              ? t('gd.joining')
               : isEntered
-                ? `✓ ENTERED (${myTickets} Ticket${myTickets !== 1 ? 's' : ''})`
-                : `ENTER GIVEAWAY (${giveaway.baseEntryTickets} Ticket${giveaway.baseEntryTickets !== 1 ? 's' : ''})`}
+                ? t('gd.enteredBtn', { n: myTickets, tickets: pickPlural(myTickets, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany') })
+                : t('gd.enterBtn', {
+                    n: giveaway.baseEntryTickets,
+                    tickets: pickPlural(giveaway.baseEntryTickets, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany'),
+                  })}
           </button>
         )}
 
@@ -543,14 +743,14 @@ export function BuyerGiveawayDetailSheet({
         {isEntered && sortedEntries.length > 1 && (
           <div>
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Leaderboard
+              {t('gd.leaderboard')}
             </p>
             <div className="space-y-1.5">
               {sortedEntries.slice(0, 5).map((entry, index) => {
-                const isMe = entry.telegramUserId === myEntry?.telegramUserId
+                const isMe = entry.isMe
                 return (
                   <div
-                    key={entry.telegramUserId}
+                    key={`${entry.joinedAt}-${index}`}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
                       isMe ? 'border border-[var(--shop-purple)]/30 bg-[var(--shop-purple)]/8' : 'bg-white/6'
                     }`}
@@ -563,15 +763,15 @@ export function BuyerGiveawayDetailSheet({
                     <span className="min-w-0 flex-1 text-sm font-medium text-[var(--shop-cream)]">
                       {entry.telegramUsername
                         ? `@${entry.telegramUsername}`
-                        : `User #${entry.telegramUserId}`}
+                        : t('gd.anonymousUser')}
                       {isMe && (
                         <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
-                          You
+                          {t('gd.you')}
                         </span>
                       )}
                     </span>
                     <span className="shrink-0 text-xs font-semibold text-[var(--shop-muted)]">
-                      {entry.totalTickets} ticket{entry.totalTickets !== 1 ? 's' : ''}
+                      {entry.totalTickets} {pickPlural(entry.totalTickets, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany')}
                     </span>
                   </div>
                 )

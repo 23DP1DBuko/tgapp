@@ -58,9 +58,7 @@ service cloud.firestore {
           'isLimitedLabel',
           'upcoming',
           'earlyAccessAt',
-          'publicAt',
-          'reservedBy',
-          'reservedUntil'
+          'publicAt'
         ])
         && isShortString(data.name, 120)
         && isShortString(data.description, 2000)
@@ -80,9 +78,7 @@ service cloud.firestore {
         && (!('isLimitedLabel' in data) || isOptionalShortString(data.isLimitedLabel, 80))
         && (!('upcoming' in data) || data.upcoming is bool)
         && (!('earlyAccessAt' in data) || data.earlyAccessAt == null || data.earlyAccessAt is string)
-        && (!('publicAt' in data) || data.publicAt == null || data.publicAt is string)
-        && (!('reservedBy' in data) || data.reservedBy == null || (data.reservedBy is number && data.reservedBy >= 0))
-        && (!('reservedUntil' in data) || data.reservedUntil == null || data.reservedUntil is timestamp);
+        && (!('publicAt' in data) || data.publicAt == null || data.publicAt is string);
     }
 
     function isPromoDocument(data) {
@@ -185,10 +181,19 @@ service cloud.firestore {
       allow read: if true;
       allow create, delete: if false;
       allow update: if false;
+
+      // Per-user popularity signals (likes / cart) — all access via Cloud Functions
+      match /signals/{userId} {
+        allow read: if false;
+        allow create, update, delete: if false;
+      }
     }
 
+    // promoCodes — codes, limits and usage counts are confidential. All access
+    // is via Cloud Functions only: buyers validate through /api/promos/validate,
+    // admins manage + list through /api/admin/*.
     match /promoCodes/{promoCodeId} {
-      allow read: if true;
+      allow read: if false;
       allow create, update, delete: if false;
     }
 
@@ -229,22 +234,15 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    match /productNotifySubscriptions/{subscriptionId} {
-      allow read: if false;
-      allow create, update, delete: if false;
-    }
-
     match /userRewards/{rewardId} {
       allow read: if false;
       allow create, update, delete: if false;
     }
 
-    match /polls/{pollId} {
-      allow read: if true;
-      allow create, update, delete: if false;
-    }
-
-    match /pollVotes/{voteId} {
+    // userStats — per-user server-tracked counters (liked product count used
+    // to verify giveaway "like N products" tasks). All access via Cloud
+    // Functions only; the device can never write its own proof.
+    match /userStats/{userId} {
       allow read: if false;
       allow create, update, delete: if false;
     }
@@ -269,13 +267,12 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // presence — realtime online user counter. Readable by all.
-    // Only lastSeen timestamp can be written by any user.
+    // presence — realtime online user counter. Readable by all, but only
+    // Cloud Functions may write (server-verified heartbeat, M6) so the counter
+    // can never be inflated with fake docs.
     match /presence/{userId} {
       allow read: if true;
-      allow create, update: if request.resource.data.keys().hasOnly(['lastSeen'])
-        && request.resource.data.lastSeen is timestamp;
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
   }
 }

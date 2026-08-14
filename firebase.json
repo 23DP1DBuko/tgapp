@@ -59,6 +59,20 @@
         }
       },
       {
+        "source": "/api/admin/listPromoCodes",
+        "function": {
+          "functionId": "listPromoCodesAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/promos/validate",
+        "function": {
+          "functionId": "validatePromoCode",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "/api/admin/upsertProduct",
         "function": {
           "functionId": "upsertProductAdmin",
@@ -69,6 +83,13 @@
         "source": "/api/admin/deleteProducts",
         "function": {
           "functionId": "deleteProductsAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/setProductDiscount",
+        "function": {
+          "functionId": "setProductDiscountAdmin",
           "region": "us-central1"
         }
       },
@@ -93,234 +114,185 @@
           "region": "us-central1"
         }
       },
-    {
-      "source": "/api/admin/deleteProductImages",
-      "function": {
-        "functionId": "deleteProductImagesAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/sendBroadcast",
-      "function": {
-        "functionId": "broadcastMessageAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/uploadBannerImage",
-      "function": {
-        "functionId": "uploadBannerImageAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/uploadGiveawayImage",
-      "function": {
-        "functionId": "uploadGiveawayImageAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/analytics",
-      "function": {
-        "functionId": "getAdminAnalytics",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/upsertCampaign",
-      "function": {
-        "functionId": "upsertCampaignAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/deleteCampaigns",
-      "function": {
-        "functionId": "deleteCampaignsAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/reorderCampaigns",
-      "function": {
-        "functionId": "reorderCampaignsAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/upsertTask",
-      "function": {
-        "functionId": "upsertTaskAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/deleteTasks",
-      "function": {
-        "functionId": "deleteTasksAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/upsertGiveaway",
-      "function": {
-        "functionId": "upsertGiveawayAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/deleteGiveaways",
-      "function": {
-        "functionId": "deleteGiveawaysAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/giveaways/join",
-      "function": {
-        "functionId": "joinGiveaway",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/giveaways/completeTask",
-      "function": {
-        "functionId": "completeGiveawayTask",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/giveaways/entries",
-      "function": {
-        "functionId": "getGiveawayEntries",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/giveaways/myEntry",
-      "function": {
-        "functionId": "getMyGiveawayEntry",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/drawGiveaway",
-      "function": {
-        "functionId": "drawGiveawayAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/referral/info",
-      "function": {
-        "functionId": "getReferralInfo",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/referral/leaderboard",
-      "function": {
-        "functionId": "getReferralLeaderboard",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/notify/subscribe",
-      "function": {
-        "functionId": "subscribeToNotify",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/notify/unsubscribe",
-      "function": {
-        "functionId": "unsubscribeFromNotify",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/products/reserve",
-      "function": {
-        "functionId": "reserveProduct",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/products/releaseReservation",
-      "function": {
-        "functionId": "releaseReservation",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/upsertPoll",
-      "function": {
-        "functionId": "upsertPollAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/deletePolls",
-      "function": {
-        "functionId": "deletePollsAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/admin/getPollResults",
-      "function": {
-        "functionId": "getPollResultsAdmin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/polls/castVote",
-      "function": {
-        "functionId": "castPollVote",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/notify/toggleBroadcast",
-      "function": {
-        "functionId": "toggleBroadcastSubscription",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/checkin/daily",
-      "function": {
-        "functionId": "dailyCheckin",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/checkin/status",
-      "function": {
-        "functionId": "getCheckinStatus",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/user/consent",
-      "function": {
-        "functionId": "acceptTermsHandler",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/user/settings",
-      "function": {
-        "functionId": "updateUserSettingsHandler",
-        "region": "us-central1"
-      }
-    },
-    {
-      "source": "/api/telegram/webhook",
+      {
+        "source": "/api/admin/deleteProductImages",
+        "function": {
+          "functionId": "deleteProductImagesAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/sendBroadcast",
+        "function": {
+          "functionId": "broadcastMessageAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/uploadBannerImage",
+        "function": {
+          "functionId": "uploadBannerImageAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/uploadGiveawayImage",
+        "function": {
+          "functionId": "uploadGiveawayImageAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/analytics",
+        "function": {
+          "functionId": "getAdminAnalytics",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/upsertCampaign",
+        "function": {
+          "functionId": "upsertCampaignAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deleteCampaigns",
+        "function": {
+          "functionId": "deleteCampaignsAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/reorderCampaigns",
+        "function": {
+          "functionId": "reorderCampaignsAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/upsertTask",
+        "function": {
+          "functionId": "upsertTaskAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deleteTasks",
+        "function": {
+          "functionId": "deleteTasksAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/upsertGiveaway",
+        "function": {
+          "functionId": "upsertGiveawayAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/deleteGiveaways",
+        "function": {
+          "functionId": "deleteGiveawaysAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/giveaways/join",
+        "function": {
+          "functionId": "joinGiveaway",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/giveaways/completeTask",
+        "function": {
+          "functionId": "completeGiveawayTask",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/giveaways/entries",
+        "function": {
+          "functionId": "getGiveawayEntries",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/giveaways/myEntry",
+        "function": {
+          "functionId": "getMyGiveawayEntry",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/admin/drawGiveaway",
+        "function": {
+          "functionId": "drawGiveawayAdmin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/referral/info",
+        "function": {
+          "functionId": "getReferralInfo",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/referral/leaderboard",
+        "function": {
+          "functionId": "getReferralLeaderboard",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/notify/toggleBroadcast",
+        "function": {
+          "functionId": "toggleBroadcastSubscription",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/checkin/daily",
+        "function": {
+          "functionId": "dailyCheckin",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/checkin/status",
+        "function": {
+          "functionId": "getCheckinStatus",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/user/consent",
+        "function": {
+          "functionId": "acceptTermsHandler",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/user/settings",
+        "function": {
+          "functionId": "updateUserSettingsHandler",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/telegram/webhook",
         "function": {
           "functionId": "telegramBotWebhook",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/presence/heartbeat",
+        "function": {
+          "functionId": "updatePresence",
           "region": "us-central1"
         }
       },

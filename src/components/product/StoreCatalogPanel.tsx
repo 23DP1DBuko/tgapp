@@ -1,21 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { triggerHapticFeedback, triggerHapticNotification, triggerHapticSelection } from '../../lib/telegram/webApp'
+import { triggerHapticFeedback, triggerHapticSelection } from '../../lib/telegram/webApp'
 import { getProductAccessLevel } from '../../lib/earlyAccess'
 import { SkeletonProductGrid } from '../ui/SkeletonCard'
 import { QuickViewSheet } from './QuickViewSheet'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
-import { useNotifySubscription } from '../../hooks/useNotifySubscription'
+import { useI18n } from '../../lib/i18n'
+import { translate } from '../../lib/i18n/translate'
+import {
+  getProductDiscountLabel,
+  getProductEffectivePrice,
+  hasProductDiscount,
+} from '../../lib/productPrice'
 import type { Campaign } from '../../types/campaign'
 import type { CartItem } from '../../types/cart'
 import type { Product, ProductCategory } from '../../types/product'
+import { CustomSelect, type CustomSelectOption } from '../ui/CustomSelect'
 
 type StoreCatalogPanelProps = {
+  initData: string
   storeScreen: 'catalog' | 'likes'
   isLoading: boolean
   errorMessage: string | null
   products: Product[]
   sortedProducts: Product[]
+  /** Product ids used as prizes in non-draft giveaways — shown with a badge, not buyable. */
+  giveawayPrizeProductIds: string[]
+  /** Products from already-drawn giveaways — shown as "Given Away", not buyable. */
+  givenAwayProductIds: string[]
   likedProductIds: string[]
   categoryOptions: Array<'all' | ProductCategory>
   selectedCategory: 'all' | ProductCategory
@@ -33,16 +45,19 @@ type StoreCatalogPanelProps = {
   onAddToCart: (product: Product) => void
   onRemoveFromCart: (productId: string) => void
   cartItems: CartItem[]
-  initData: string
   campaigns?: Campaign[]
   onQuickViewChange?: (isOpen: boolean) => void
+  onOpenRewards: () => void
 }
 
 export function StoreCatalogPanel({
+  initData,
   isLoading,
   errorMessage,
   products,
   sortedProducts,
+  giveawayPrizeProductIds,
+  givenAwayProductIds,
   likedProductIds,
   storeScreen,
   categoryOptions,
@@ -60,11 +75,20 @@ export function StoreCatalogPanel({
   onAddToCart,
   onRemoveFromCart,
   cartItems,
-  initData,
   campaigns,
   onQuickViewChange,
+  onOpenRewards,
 }: StoreCatalogPanelProps) {
+  const { t } = useI18n()
   const likedProductIdSet = new Set(likedProductIds)
+  const giveawayPrizeProductIdSet = useMemo(
+    () => new Set(giveawayPrizeProductIds),
+    [giveawayPrizeProductIds],
+  )
+  const givenAwayProductIdSet = useMemo(
+    () => new Set(givenAwayProductIds),
+    [givenAwayProductIds],
+  )
   const normalizedSearch = storeSearchQuery.trim()
   const hasActiveFilters =
     normalizedSearch.length > 0 ||
@@ -77,6 +101,24 @@ export function StoreCatalogPanel({
     storeCollectionView !== 'all' ||
     storeSortMode !== 'latest'
   const [showFilters, setShowFilters] = useState(false)
+  const [showAllCategories, setShowAllCategories] = useState(false)
+  // Show at most 4 category pills; a "+N more" pill reveals the rest. If the
+  // active category sits beyond the first batch, show everything so it's visible.
+  const selectedCategoryInFirstBatch =
+    selectedCategory !== 'all' &&
+    !categoryOptions.slice(0, 4).includes(selectedCategory)
+  const categoryOptionsToShow =
+    showAllCategories || selectedCategoryInFirstBatch
+      ? categoryOptions
+      : categoryOptions.slice(0, 4)
+  const hiddenCategoryCount =
+    categoryOptions.length - categoryOptionsToShow.length
+
+  // Sort dropdown options (rebuilt per language change)
+  const SORT_OPTIONS: CustomSelectOption[] = [
+    { value: 'latest', label: t('filters.latest') },
+    { value: 'trending', label: t('filters.trending') },
+  ]
 
   // Quick view bottom sheet state
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null)
@@ -91,7 +133,6 @@ export function StoreCatalogPanel({
 
   const [searchInputValue, setSearchInputValue] = useState('')
   const reducedMotion = useReducedMotion()
-  const { isSubscribed, subscribe, unsubscribe } = useNotifySubscription(initData)
   const reducedMotionRef = useRef(reducedMotion)
   reducedMotionRef.current = reducedMotion
 
@@ -177,7 +218,7 @@ export function StoreCatalogPanel({
       triggerHapticFeedback('medium')
       await onRefresh()
       isRefreshingRef.current = false
-      setRefreshLabel('Updated just now')
+      setRefreshLabel(translate('catalog.updatedJustNow'))
     }
 
     document.addEventListener('pointerdown', handlePointerDown, { passive: true })
@@ -215,23 +256,55 @@ export function StoreCatalogPanel({
 
   // Derive displayProducts: when hideSoldOut is on, filter sold items out.
   // When off, show all products but push sold items to the bottom of the grid.
+  // Scheduled/early-access items (upcoming flag or not yet fully public) are
+  // separated into their own "Upcoming" section after the main grid.
   const displayProducts = useMemo(() => {
     if (storeScreen === 'likes') return sortedProducts
 
+    // Given-away products are treated exactly like sold: greyed out, pushed to
+    // the bottom of the grid, and hidden by the "Only Available" filter.
+    const isSellable = (p: Product) =>
+      p.isAvailable && !givenAwayProductIdSet.has(p.id)
+
     if (hideSoldOut) {
-      return sortedProducts.filter((p) => p.isAvailable)
+      return sortedProducts.filter(isSellable)
     }
 
     // Keep available items in their sorted order, then append sold items
-    const available = sortedProducts.filter((p) => p.isAvailable)
-    const sold = sortedProducts.filter((p) => !p.isAvailable)
+    const available = sortedProducts.filter(isSellable)
+    const sold = sortedProducts.filter((p) => !isSellable(p))
     return [...available, ...sold]
-  }, [sortedProducts, hideSoldOut, storeScreen])
+  }, [givenAwayProductIdSet, sortedProducts, hideSoldOut, storeScreen])
+
+  const { liveProducts, upcomingProducts } = useMemo(() => {
+    if (storeScreen === 'likes') {
+      return { liveProducts: displayProducts, upcomingProducts: [] }
+    }
+
+    const live: Product[] = []
+    const upcoming: Product[] = []
+
+    for (const product of displayProducts) {
+      if (!product.isAvailable) {
+        // Sold items stay at the bottom of the main grid
+        live.push(product)
+        continue
+      }
+      if (isUpcomingProduct(product)) {
+        upcoming.push(product)
+      } else {
+        live.push(product)
+      }
+    }
+
+    return { liveProducts: live, upcomingProducts: upcoming }
+  }, [displayProducts, storeScreen])
 
   // ── Hero carousel state ──
   const [activeCampaignIndex, setActiveCampaignIndex] = useState(0)
   const campaignPointerStartRef = useRef<number | null>(null)
-  const campaignIsPausedRef = useRef(false)
+  // Once the user interacts with the carousel, auto-advance stops for good.
+  const carouselHasInteractedRef = useRef(false)
 
   const CAMPAIGN_SLIDES = useMemo(() => {
     if (campaigns && campaigns.length > 0) {
@@ -247,54 +320,50 @@ export function StoreCatalogPanel({
     return [
       {
         imageUrl: '',
-        badgeText: products.filter((p) => p.isAvailable).length > 0 ? 'Live Now' : 'Coming Soon',
-        headline: 'DROP 01',
-        subheading: 'AVAILABLE NOW',
-        caption: 'Limited pieces • First come, first served',
+        badgeText: products.filter((p) => p.isAvailable).length > 0 ? t('cam.liveNow') : t('cam.comingSoon'),
+        headline: t('cam.drop01'),
+        subheading: t('cam.availableNow'),
+        caption: t('cam.limitedCaption'),
       },
       {
         imageUrl: '',
-        badgeText: products.filter((p) => p.isAvailable).length > 0 ? 'New Arrivals' : 'Next Drop',
-        headline: 'FRESH',
-        subheading: 'NEW ARRIVALS',
-        caption: 'Latest pieces added to the collection',
+        badgeText: products.filter((p) => p.isAvailable).length > 0 ? t('cam.newArrivals') : t('cam.nextDrop'),
+        headline: t('cam.fresh'),
+        subheading: t('cam.newArrivalsSub'),
+        caption: t('cam.latestCaption'),
       },
       {
         imageUrl: '',
-        badgeText: 'Limited Edition',
-        headline: 'EXCLUSIVE',
-        subheading: 'ONE-OF-ONE',
-        caption: 'Unique pieces you will not find elsewhere',
+        badgeText: t('cam.limitedEdition'),
+        headline: t('cam.exclusive'),
+        subheading: t('cam.oneOfOne'),
+        caption: t('cam.uniqueCaption'),
       },
     ]
-  }, [campaigns, products])
+  }, [campaigns, products, t])
 
-  // Auto-advance carousel
+  // Auto-advance carousel — stops permanently after the first user interaction
   useEffect(() => {
-    if (campaignIsPausedRef.current) return
-
     const timer = setInterval(() => {
+      if (carouselHasInteractedRef.current) return
       setActiveCampaignIndex((prev) => (prev + 1) % CAMPAIGN_SLIDES.length)
     }, 4000)
 
     return () => clearInterval(timer)
-   
   }, [CAMPAIGN_SLIDES.length])
 
   function handleCampaignPointerDown(clientX: number) {
-    campaignIsPausedRef.current = true
+    carouselHasInteractedRef.current = true
     campaignPointerStartRef.current = clientX
   }
 
   function handleCampaignPointerEnd(clientX: number) {
     if (campaignPointerStartRef.current === null) {
-      campaignIsPausedRef.current = false
       return
     }
 
     const deltaX = clientX - campaignPointerStartRef.current
     campaignPointerStartRef.current = null
-    campaignIsPausedRef.current = false
 
     if (Math.abs(deltaX) < 40) return
 
@@ -328,7 +397,7 @@ export function StoreCatalogPanel({
                 <path d="M5 12h14" />
                 <path d="m12 5 7 7-7 7" />
               </svg>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">Release to refresh</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">{t('catalog.releaseToRefresh')}</span>
             </>
           ) : (
             <>
@@ -336,7 +405,7 @@ export function StoreCatalogPanel({
                 <path d="M12 5v14" />
                 <path d="m19 12-7 7-7-7" />
               </svg>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">Pull to refresh</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">{t('catalog.pullToRefresh')}</span>
             </>
           )}
         </div>
@@ -388,7 +457,7 @@ export function StoreCatalogPanel({
             event.currentTarget.releasePointerCapture(event.pointerId)
           }
           campaignPointerStartRef.current = null
-          campaignIsPausedRef.current = false
+          carouselHasInteractedRef.current = true
         }}
       >
         {/* Decorative texture lines */}
@@ -410,7 +479,7 @@ export function StoreCatalogPanel({
               decoding="async"
               className="h-full w-full object-cover"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0f0712] via-[#0f0712]/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[var(--shop-overlay)] via-[var(--shop-overlay)]/60 to-transparent" />
           </div>
         ) : null}
 
@@ -418,7 +487,7 @@ export function StoreCatalogPanel({
         <div className="relative flex aspect-[16/9] flex-col items-start justify-end p-6 sm:p-8">
           <span
             key={`badge-${activeCampaignIndex}`}
-            className="mb-2 animate-[fade-slide-in_0.4s_ease-out_backwards] inline-block rounded-full bg-white/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.22em] text-white/70"
+            className="mb-2 animate-[fade-slide-in_0.4s_ease-out_backwards] inline-block rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70"
           >
             {currentCampaign.badgeText}
           </span>
@@ -447,6 +516,7 @@ export function StoreCatalogPanel({
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation()
+                  carouselHasInteractedRef.current = true
                   setActiveCampaignIndex(index)
                 }}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -454,7 +524,7 @@ export function StoreCatalogPanel({
                     ? 'w-4 bg-white'
                     : 'w-1.5 bg-white/30'
                 }`}
-                aria-label={`Slide ${index + 1}`}
+                aria-label={t('cam.slideAria', { n: index + 1 })}
               />
             ))}
           </div>
@@ -475,7 +545,7 @@ export function StoreCatalogPanel({
           name="catalog-search"
           value={searchInputValue}
           onChange={(event) => setSearchInputValue(event.target.value)}
-          placeholder={storeScreen === 'likes' ? 'Search your likes...' : 'Search items...'}
+          placeholder={storeScreen === 'likes' ? t('search.likesPlaceholder') : t('search.itemsPlaceholder')}
           className="flex-1 bg-transparent text-sm text-[var(--shop-cream)] outline-none placeholder:text-[var(--shop-muted)]/60"
         />
         {storeScreen !== 'likes' ? (
@@ -485,10 +555,10 @@ export function StoreCatalogPanel({
               setShowFilters((prev) => !prev)
               triggerHapticFeedback('light')
             }}
-            className={`relative ml-2 flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+            className={`relative ml-2 flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
               showFilters || hasActiveFilters ? 'bg-white/10 text-white' : 'text-[var(--shop-muted)]'
             }`}
-            aria-label="Toggle filters"
+            aria-label={t('filters.toggleAria')}
           >
             <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden="true">
           <g transform="translate(2, 2)">
@@ -508,7 +578,7 @@ export function StoreCatalogPanel({
       {storeScreen !== 'likes' ? (
         <div
           className={`overflow-hidden transition-all duration-300 ease-out ${
-            showFilters ? 'max-h-[300px] opacity-100' : 'max-h-0 opacity-0'
+            showFilters ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0'
           }`}
         >
           <div
@@ -516,59 +586,65 @@ export function StoreCatalogPanel({
               showFilters ? 'translate-y-0' : '-translate-y-2'
             }`}
           >
-            {/* Sort — borderless text tabs */}
-            <div className="flex gap-1 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-              {([['latest', 'Latest'], ['trending', 'Trending']] as const).map(([sortMode, label]) => (
-                <button
-                  key={sortMode}
-                  type="button"
-                  onClick={() => {
-                    triggerHapticSelection()
-                    onSelectSortMode(sortMode)
-                  }}
-                  className={`relative shrink-0 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] whitespace-nowrap transition-colors ${
-                    storeSortMode === sortMode ? 'text-white' : 'text-[var(--shop-muted)]'
-                  }`}
-                >
-                  {label}
-                  {storeSortMode === sortMode ? (
-                    <span className="absolute bottom-0 left-1/2 h-0.5 w-5 -translate-x-1/2 rounded-full bg-white" />
-                  ) : null}
-                </button>
-              ))}
+            {/* Sort — compact dropdown */}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                {t('filters.sortBy')}
+              </span>
+              <CustomSelect
+                value={storeSortMode}
+                options={SORT_OPTIONS}
+                onChange={(value) => {
+                  triggerHapticFeedback('light')
+                  onSelectSortMode(value as 'latest' | 'trending')
+                }}
+              />
             </div>
 
-            {/* Categories — flat pills */}
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>              {categoryOptions.map((category) => {
-              const isActive = selectedCategory === category
-              return (
+            {/* Categories — first 4 pills, expandable */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {categoryOptionsToShow.map((category) => {
+                const isActive = selectedCategory === category
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => {
+                      triggerHapticSelection()
+                      onSelectCategory(category)
+                    }}
+                    className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] whitespace-nowrap transition-colors ${
+                      isActive ? 'bg-white text-black' : 'bg-white/8 text-[var(--shop-muted)]'
+                    }`}
+                  >
+                    {category}
+                  </button>
+                )
+              })}
+              {hiddenCategoryCount > 0 ? (
                 <button
-                  key={category}
                   type="button"
                   onClick={() => {
-                    triggerHapticSelection()
-                    onSelectCategory(category)
+                    triggerHapticFeedback('light')
+                    setShowAllCategories(true)
                   }}
-                  className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] whitespace-nowrap transition-colors ${
-                    isActive ? 'bg-white text-black' : 'bg-white/8 text-[var(--shop-muted)]'
-                  }`}
+                  className="shrink-0 rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)] transition-colors hover:bg-white/8"
                 >
-                  {category}
+                  {t('filters.showMore', { count: hiddenCategoryCount })}
                 </button>
-              )
-            })}
+              ) : null}
             </div>
 
             {/* Only Available toggle pill */}
             <div className="mt-3 flex items-center justify-between rounded-2xl bg-white/6 px-4 py-3">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Only Available
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                  {t('filters.onlyAvailable')}
                 </span>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={hideSoldOut}
-                  aria-label="Filter out sold items"
+                  aria-label={t('filters.filterSoldAria')}
                   onClick={() => {
                     triggerHapticFeedback('light')
                     setHideSoldOut((prev) => !prev)
@@ -593,16 +669,16 @@ export function StoreCatalogPanel({
         {/* Results header */}
         {!isLoading && !errorMessage && products.length > 0 ? (
           <div className="mb-4 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
-              {displayProducts.length} {displayProducts.length === 1 ? 'Piece' : 'Pieces'}
+            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
+              {displayProducts.length} {displayProducts.length === 1 ? t('results.piece') : t('results.pieceMany')}
             </span>
             {hasActiveFilters && storeScreen !== 'likes' ? (
               <button
                 type="button"
                 onClick={onResetFilters}
-                className="rounded-full border border-white/10 bg-white/8 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
+                className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
               >
-                Clear All
+                {t('filters.clearAll')}
               </button>
             ) : null}
           </div>
@@ -620,7 +696,7 @@ export function StoreCatalogPanel({
 
         {/* Empty state */}
         {!isLoading && !errorMessage && products.length === 0 ? (
-          <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">The drop is empty right now.</p>
+          <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">{t('empty.dropEmpty')}</p>
         ) : null}
 
         {/* No matches state — redesigned empty view */}
@@ -633,7 +709,7 @@ export function StoreCatalogPanel({
                 </svg>
               </div>
               <p className="animate-[fade-slide-in_0.4s_ease-out_backwards] text-sm font-bold uppercase tracking-[0.18em] text-zinc-300" style={{ animationDelay: '100ms' }}>
-                Seems you didn&apos;t like any product yet.
+                {t('empty.noLikes')}
               </p>
             </div>
           ) : (
@@ -647,20 +723,20 @@ export function StoreCatalogPanel({
               </div>
               {/* High-contrast title */}
               <p className="animate-[fade-slide-in_0.4s_ease-out_backwards] text-sm font-bold uppercase tracking-[0.2em] text-zinc-300" style={{ animationDelay: '100ms' }}>
-                OOPS! NOTHING FOUND
+                {t('empty.nothingFound')}
               </p>
               {/* Subtext */}
               <p className="animate-[fade-slide-in_0.4s_ease-out_backwards] mt-2 text-xs leading-relaxed text-zinc-500" style={{ animationDelay: '200ms' }}>
-                Try checking your spelling or use different keywords.
+                {t('empty.tryDifferent')}
               </p>
             </div>
           )
         ) : null}
 
         {/* Product grid with staggered entrance */}
-        {!isLoading && !errorMessage && displayProducts.length > 0 ? (
+        {!isLoading && !errorMessage && liveProducts.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
-            {displayProducts.map((product, index) => (
+            {liveProducts.map((product, index) => (
               <div
                 key={product.id}
                 className={isFirstLoad ? 'animate-[fade-slide-in_0.4s_ease-out_backwards]' : ''}
@@ -668,15 +744,42 @@ export function StoreCatalogPanel({
               >                  <CatalogProductCard
                     product={product}
                     isLiked={likedProductIdSet.has(product.id)}
-                    isSubscribed={isSubscribed(product.id)}
+                    isGiveawayPrize={giveawayPrizeProductIdSet.has(product.id)}
+                    isGivenAway={givenAwayProductIdSet.has(product.id)}
                     onOpenProduct={onOpenProduct}
                     onToggleLike={onToggleLike}
-                    onSubscribe={subscribe}
-                    onUnsubscribe={unsubscribe}
                     onQuickView={setQuickViewProduct}
                   />
               </div>
             ))}
+          </div>
+        ) : null}
+
+        {/* Upcoming section — scheduled / early-access items shown after the main grid */}
+        {!isLoading && !errorMessage && upcomingProducts.length > 0 ? (
+          <div className="mt-6">
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
+              {t('catalog.upcoming')}
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              {upcomingProducts.map((product, index) => (
+                <div
+                  key={product.id}
+                  className={isFirstLoad ? 'animate-[fade-slide-in_0.4s_ease-out_backwards]' : ''}
+                  style={isFirstLoad ? { animationDelay: `${index * 0.05}s` } : undefined}
+                >
+                  <CatalogProductCard
+                    product={product}
+                    isLiked={likedProductIdSet.has(product.id)}
+                    isGiveawayPrize={giveawayPrizeProductIdSet.has(product.id)}
+                    isGivenAway={givenAwayProductIdSet.has(product.id)}
+                    onOpenProduct={onOpenProduct}
+                    onToggleLike={onToggleLike}
+                    onQuickView={setQuickViewProduct}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         ) : null}
       </article>
@@ -686,6 +789,8 @@ export function StoreCatalogPanel({
         product={quickViewProduct}
         isLiked={quickViewProduct ? likedProductIdSet.has(quickViewProduct.id) : false}
         isInCart={quickViewProduct ? cartProductIdSet.has(quickViewProduct.id) : false}
+        isGiveawayPrize={quickViewProduct ? giveawayPrizeProductIdSet.has(quickViewProduct.id) : false}
+        isGivenAway={quickViewProduct ? givenAwayProductIdSet.has(quickViewProduct.id) : false}
         onClose={() => setQuickViewProduct(null)}
         onToggleLike={onToggleLike}
         onAddToCart={onAddToCart}
@@ -693,9 +798,8 @@ export function StoreCatalogPanel({
         onOpenDetail={(productId) => {
           onOpenProduct(productId)
         }}
-        isSubscribed={quickViewProduct ? isSubscribed(quickViewProduct.id) : false}
-        onSubscribe={subscribe}
-        onUnsubscribe={unsubscribe}
+        onOpenRewards={onOpenRewards}
+        initData={initData}
       />
     </>
   )
@@ -705,27 +809,34 @@ function getProductHeatScore(product: Product) {
   return product.likesCount + product.cartCount * 2
 }
 
+/** A scheduled product (upcoming flag or early-access window not yet fully public). */
+function isUpcomingProduct(product: Product): boolean {
+  if (!product.isAvailable) return false
+  if (product.upcoming === true) return true
+  const accessLevel = getProductAccessLevel(product)
+  return accessLevel === 'early_access' || accessLevel === 'private'
+}
+
 type CatalogProductCardProps = {
   product: Product
   isLiked: boolean
-  isSubscribed: boolean
+  isGiveawayPrize: boolean
+  isGivenAway: boolean
   onOpenProduct: (productId: string) => void
   onToggleLike: (product: Product) => void
-  onSubscribe: (productId: string) => Promise<void>
-  onUnsubscribe: (productId: string) => Promise<void>
   onQuickView: (product: Product) => void
 }
 
 function CatalogProductCard({
   product,
   isLiked,
-  isSubscribed: productSubscribed,
+  isGiveawayPrize,
+  isGivenAway,
   onOpenProduct,
   onToggleLike,
-  onSubscribe,
-  onUnsubscribe,
   onQuickView,
 }: CatalogProductCardProps) {
+  const { t } = useI18n()
   const reducedMotion = useReducedMotion()
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
   const pointerStartXRef = useRef<number | null>(null)
@@ -735,6 +846,9 @@ function CatalogProductCard({
   const activePointerIdRef = useRef<number | null>(null)
   const heatScore = getProductHeatScore(product)
   const selectedImage = product.images[selectedImageIndex] ?? product.images[0] ?? null
+  const hasDiscount = hasProductDiscount(product)
+  const effectivePrice = getProductEffectivePrice(product.price, product.discountType, product.discountValue)
+  const discountLabel = getProductDiscountLabel(product)
 
   function moveGallery(direction: 'prev' | 'next') {
     if (product.images.length <= 1) return
@@ -744,13 +858,14 @@ function CatalogProductCard({
     })
   }
 
-  const isSold = !product.isAvailable
+  // Given-away items get the exact same visual treatment as sold items.
+  const isSoldLike = !product.isAvailable || isGivenAway
 
   return (
     <article
       role="link"
-      className={`group flex cursor-pointer flex-col overflow-hidden rounded-[28px] border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition-transform ${
-        isSold ? 'border-white/6 opacity-50' : 'border-white/10'
+      className={`group flex cursor-pointer flex-col overflow-hidden rounded-[28px] border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/60 ${
+        isSoldLike ? 'border-white/6 opacity-50' : 'border-white/10'
       }`}
       onClick={() => {
         if (didSwipeRef.current) {
@@ -781,7 +896,7 @@ function CatalogProductCard({
       onContextMenu={(e) => e.preventDefault()}
     >
         <div
-          className="relative aspect-square w-full shrink-0 select-none overflow-hidden bg-black/20"
+          className="relative aspect-square w-full flex-auto min-h-0 select-none overflow-hidden bg-black/20"
           style={{
             touchAction: 'pan-y',
             WebkitTouchCallout: 'none',
@@ -859,9 +974,25 @@ function CatalogProductCard({
 
 
 
+          {/* Giveaway badge — amber while the giveaway is still live. Drawn
+              prizes get the big centered "GIVEN AWAY" stamp instead (sold-style). */}
+          {isGiveawayPrize ? (
+            <span className="absolute left-3 top-3 z-10 rounded-full bg-amber-400/95 px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.14em] text-black shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+              {t('card.giveawayPrize')}
+            </span>
+          ) : null}
+
+          {/* Discount badge — amber sale tag on the image when the product is
+              on sale (skipped for sold / given-away cards). */}
+          {hasDiscount && !isSoldLike && discountLabel ? (
+            <span className="absolute bottom-3 left-3 z-10 rounded-full bg-amber-400/95 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.14em] text-black shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+              {discountLabel}
+            </span>
+          ) : null}
+
           {/* Heat badge */}
-          {heatScore >= 3 && product.isAvailable ? (
-            <span className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-[var(--shop-purple)]/90 text-white" aria-label="Trending hot">
+          {heatScore >= 3 && !isSoldLike ? (
+            <span className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-[var(--shop-purple)]/90 text-white" aria-label={t('card.trendingHotAria')}>
               <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
           <g transform="translate(2, 2)">
 
@@ -881,92 +1012,63 @@ function CatalogProductCard({
               loading="lazy"
               decoding="async"
               draggable={false}
-              className={`h-full w-full select-none object-cover scale-110 transition-all duration-300 ${product.isAvailable ? '' : 'grayscale opacity-60'}`}
+              className={`h-full w-full select-none object-cover scale-110 transition-all duration-300 ${isSoldLike ? 'grayscale opacity-60' : ''}`}
               style={{
                 WebkitTouchCallout: 'none',
                 WebkitUserSelect: 'none',
               }}
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center px-3 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">No Image</div>
+            <div className="flex h-full w-full items-center justify-center px-3 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">{t('card.noImage')}</div>
           )}
 
-          {/* SOLD badge overlay for sold items */}
-          {isSold ? (
+          {/* Sold / given-away stamp overlay in front of the card */}
+          {isSoldLike ? (
             <span className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rotate-[-12deg] rounded-xl border-2 border-[var(--shop-muted)]/50 bg-black/70 px-4 py-2 text-sm font-black uppercase tracking-[0.28em] text-[var(--shop-muted)]/80 shadow-[0_0_24px_rgba(0,0,0,0.4)] backdrop-blur-sm">
-              SOLD
+              {isGivenAway ? t('card.givenAway') : t('card.sold')}
             </span>
           ) : null}
 
-          {/* Early Access badge */}
-          {(() => {
-            const accessLevel = product.isAvailable ? getProductAccessLevel(product) : 'private'
-            if (accessLevel === 'early_access') {
-              return (
-                <span className="absolute left-3 top-3 rounded-full bg-amber-500/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
-                  Early Access
-                </span>
-              )
-            }
-            return null
-          })()}
-
-          {/* Notify Me button for sold-out / upcoming products */}
-          {(!product.isAvailable || product.upcoming) ? (
-            <button
-              type="button"
-              onClick={async (event) => {
-                event.stopPropagation()
-                triggerHapticFeedback('light')
-                if (productSubscribed) {
-                  await onUnsubscribe(product.id)
-                } else {
-                  await onSubscribe(product.id)
-                  triggerHapticNotification('success')
-                }
-              }}
-              className={`absolute right-3 bottom-3 z-20 flex h-8 w-8 items-center justify-center rounded-full transition-all active:scale-90 ${
-                productSubscribed
-                  ? 'bg-[var(--shop-purple)] text-white shadow-[0_0_12px_rgba(168,85,247,0.3)]'
-                  : 'bg-black/60 text-white/80 backdrop-blur-sm hover:text-white'
-              }`}
-              aria-label={productSubscribed ? 'Unsubscribe from notifications' : 'Notify me when available'}
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill={productSubscribed ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-              </svg>
-            </button>
-          ) : null}
         </div>
 
         {/* Info section */}
-        <div className="flex flex-col px-3 pb-4 pt-3">
+        <div className="flex flex-col px-3 pb-3 pt-2.5">
           {/* Row 1: Product name (truncated) + Price (same baseline) */}
           <div className="flex items-baseline justify-between gap-2">
             <p
               className={`min-w-0 truncate text-base font-semibold tracking-[-0.03em] ${
-                product.isAvailable
-                  ? 'text-[var(--shop-cream)]'
-                  : 'text-[var(--shop-muted)]/70'
+                isSoldLike
+                  ? 'text-[var(--shop-muted)]/70'
+                  : 'text-[var(--shop-cream)]'
               }`}
               title={product.name}
             >
               {product.name}
             </p>
-            <span
-              className={`shrink-0 text-sm font-semibold tracking-[-0.03em] ${
-                product.isAvailable
-                  ? 'text-[var(--shop-cream)]'
-                  : 'text-[var(--shop-muted)]/40 line-through'
-              }`}
-            >
-              {product.price} {product.currency}
-            </span>
+            {hasDiscount && !isSoldLike ? (
+              <span className="flex shrink-0 items-baseline gap-1">
+                <span className="text-[10px] font-medium text-[var(--shop-muted)]/60 line-through">
+                  {product.price} {product.currency}
+                </span>
+                <span className="text-sm font-bold tracking-[-0.03em] text-emerald-300">
+                  {effectivePrice} {product.currency}
+                </span>
+              </span>
+            ) : (
+              <span
+                className={`shrink-0 text-sm font-semibold tracking-[-0.03em] ${
+                  isSoldLike
+                    ? 'text-[var(--shop-muted)]/40 line-through'
+                    : 'text-[var(--shop-cream)]'
+                }`}
+              >
+                {product.price} {product.currency}
+              </span>
+            )}
           </div>
           {/* Row 2: Brand (muted, left) + Like button (right) */}
           <div className="mt-1 flex items-center justify-between">
-            <p className="truncate text-[10px] uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+            <p className="truncate text-[11px] uppercase tracking-[0.18em] text-[var(--shop-muted)]">
               {product.brandNames.join(' - ') || product.category}
             </p>
             <button
@@ -976,14 +1078,14 @@ function CatalogProductCard({
                 triggerHapticFeedback('light')
                 void onToggleLike(product)
               }}
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors ${
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors ${
                 isLiked
-                  ? 'text-[#E61E26]'
+                  ? 'text-[var(--shop-like)]'
                   : 'text-[var(--shop-muted)] hover:text-white/80'
               }`}
-              aria-label={isLiked ? 'Unlike' : 'Like'}
+              aria-label={isLiked ? t('card.unlikeAria') : t('card.likeAria')}
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 flex-shrink-0" fill={isLiked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 flex-shrink-0" fill={isLiked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 21s-6.7-4.4-9.2-8.1C.8 10 .9 6.5 3.6 4.7c2.2-1.5 5.1-.8 6.8 1.3C12 3.9 14.8 3.2 17 4.7c2.7 1.8 2.8 5.3.8 8.2C18.7 14.2 12 21 12 21Z" />
               </svg>
             </button>

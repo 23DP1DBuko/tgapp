@@ -10,7 +10,7 @@ web
 **Operator:** The store admin who manages products, orders, promos, giveaways, and broadcasts through an admin panel inside the same app.
 
 ## Product Purpose
-YungWear is a small streetwear shop that sells limited-edition and one-of-one items to a close community of followers. The app makes it easy to discover new drops, secure rare items before they sell out, and stay connected through giveaways, polls, and broadcast announcements — all without leaving Telegram.
+YungWear is a small streetwear shop that sells limited-edition and one-of-one items to a close community of followers. The app makes it easy to discover new drops, secure rare items before they sell out, and stay connected through giveaways and broadcast announcements — all without leaving Telegram.
 
 Success means the community feels first in line for every drop and the admin can run the store manually with minimal overhead.
 
@@ -30,19 +30,20 @@ A Telegram-native streetwear drop app — not a marketplace, not a browser store
 ### Confirmed
 - Product catalog with category filtering
 - Product detail pages with multiple images
-- Cart (client-side, persisted to Firestore per user)
+- Cart (client-side, persisted per Telegram user in local storage)
 - Promo code validation on checkout
 - Order creation and buyer order history
 - Wishlist (likes/bookmarks per product)
 - Daily check-in with streak tracking
 - Giveaway system with task-based ticket entries and winner drawing
-- Polls for community engagement
 - Broadcast messages sent via Telegram bot
 - Campaign banners on the home page
 - Referral tracking and leaderboard
-- Admin panel for product, order, promo, giveaway, poll, broadcast, and campaign management
+- Admin panel for product, order, promo, giveaway, discount, broadcast, and campaign management
 - Image upload to Firebase Storage (admin)
-- Subscribe/notify for drop announcements
+- Product discounts (percentage or fixed amount off)
+- Giveaway-prize products locked from sale (server-enforced at checkout)
+- Broadcast opt-in for drop announcements (via the Telegram bot)
 - Online user presence tracking
 - Consent tracking for legal compliance (GDPR)
 

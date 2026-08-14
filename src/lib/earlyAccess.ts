@@ -1,3 +1,4 @@
+import { pickPlural } from './i18n/translate'
 import type { Product } from '../types/product'
 
 export type ProductAccessLevel = 'private' | 'early_access' | 'public'
@@ -33,9 +34,25 @@ export function getProductAccessLevel(product: Product, now = Date.now()): Produ
   return 'private'
 }
 
-/** Check if a user is eligible for early access (has referralCount >= 1) */
+/** Number of referrals required to unlock early-access purchases. */
+export const EARLY_ACCESS_REFERRAL_THRESHOLD = 1
+
+/**
+ * Localized "friend(s)" word for the early-access threshold — the single
+ * source of truth for the plural used across CTA, note, and error copy.
+ */
+export function referralFriendsWord(): string {
+  return pickPlural(
+    EARLY_ACCESS_REFERRAL_THRESHOLD,
+    'coError.friendOne',
+    'coError.friendFew',
+    'coError.friendMany',
+  )
+}
+
+/** Check if a user is eligible for early access (referralCount >= threshold). */
 export function isEligibleForEarlyAccess(referralCount: number): boolean {
-  return referralCount >= 1
+  return referralCount >= EARLY_ACCESS_REFERRAL_THRESHOLD
 }
 
 /** Get an ISO timestamp string from a Firestore Timestamp or a string */

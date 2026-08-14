@@ -1,4 +1,7 @@
 import { Button } from '../ui/Button'
+import { useI18n } from '../../lib/i18n'
+import { tLocale } from '../../lib/i18n/locale'
+import { LegalDocBody } from './LegalDocBody'
 
 type PrivacyPolicyProps = {
   onBack: () => void
@@ -12,6 +15,7 @@ type PrivacyPolicyProps = {
  * being used in production. See LEGAL_TODO.md for details.
  */
 export function PrivacyPolicy({ onBack }: PrivacyPolicyProps) {
+  const { t, language } = useI18n()
   return (
     <div className="overflow-y-auto touch-pan-y max-h-dvh pb-24 [scrollbar-width:none]">
       <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
@@ -19,268 +23,33 @@ export function PrivacyPolicy({ onBack }: PrivacyPolicyProps) {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Legal
+              {t('legal.kicker')}
             </p>
             <h2 className="mt-1 text-2xl font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
-              Privacy Policy
+              {t('legal.privacyTitle')}
             </h2>
           </div>
           <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
-            Draft — v1.0
+            {t('legal.draft')}
           </span>
         </div>
 
         <div className="space-y-5 text-sm leading-6 text-zinc-300">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-            Last updated: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+            {t('legal.lastUpdated', { date: new Date().toLocaleDateString(tLocale(language), { day: 'numeric', month: 'long', year: 'numeric' }) })}
           </p>
 
-          {/* 1. Controller */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              1. Who is responsible for your data?
-            </h3>
-            <p>
-              The data controller is a <strong>private individual</strong> operating the
-              YungWear Mini App as a personal project. The App showcases personal items
-              (for example, used or unworn clothing) and facilitates order requests via
-              Depop/Yaga or direct messaging. If you have any questions about this policy
-              or your data, please contact us via our Telegram bot.
-            </p>
-            <p className="mt-2">
-              The controller is based in Latvia (European Union). All data processing
-              described in this policy is subject to the General Data Protection Regulation
-              (GDPR).
-            </p>
-          </section>
-
-          {/* 2. Data collected */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              2. What data do we collect?
-            </h3>
-            <p>When you use this Mini App, we collect the following categories of data:</p>
-            <ul className="mt-2 list-disc space-y-1.5 pl-5">
-              <li>
-                <strong>Telegram account data:</strong> Telegram user ID, username, first name,
-                and language code. This is obtained from Telegram when you open the Mini App.
-              </li>
-              <li>
-                <strong>Order request data:</strong> The information you submit through the
-                checkout form, including your full name, Telegram handle, contact notes,
-                delivery address or meetup preferences, and payment method preference.
-              </li>
-              <li>
-                <strong>Referral activity:</strong> Your unique referral code, number of
-                successful referrals, and Telegram user IDs of referred users (stored securely
-                and not publicly displayed).
-              </li>
-              <li>
-                <strong>Giveaway participation:</strong> Your Telegram user ID, username,
-                entry timestamp, completed tasks, and ticket count when you participate in
-                giveaways.
-              </li>
-              <li>
-                <strong>Daily check-in:</strong> Your check-in streak count and total check-in
-                count to manage reward milestones.
-              </li>
-              <li>
-                <strong>Leaderboard visibility:</strong> Whether you have chosen to appear in
-                the public referral leaderboard (opt-in only).
-              </li>
-              <li>
-                <strong>Broadcast subscription:</strong> Your explicit opt-in or opt-out status
-                for receiving broadcast messages from us.
-              </li>
-              <li>
-                <strong>Online presence:</strong> A timestamp indicating your last activity in
-                the app, used to show an approximate count of currently active users. This is
-                not a real-time tracking system and does not record your behaviour.
-              </li>
-            </ul>
-          </section>
-
-          {/* 3. Purpose and legal basis */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              3. Why do we process your data and on what legal basis?
-            </h3>
-            <div className="mt-2 space-y-3">
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Processing order requests</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Performance of a contract</strong> (GDPR Art. 6(1)(b)).
-                  We need your Telegram ID, name, and contact/fulfilment details to process
-                  your order request and communicate with you about it.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Referral and rewards system</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Legitimate interest</strong> (GDPR Art. 6(1)(f)) and, for
-                  leaderboard visibility, <strong>consent</strong> (GDPR Art. 6(1)(a)). We track
-                  referrals to operate the rewards programme. Your leaderboard visibility is
-                  opt-in only.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Giveaway participation</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Performance of a contract</strong> (GDPR Art. 6(1)(b)).
-                  We need your Telegram ID to register your entry, manage tickets, and contact
-                  you if you win.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Broadcast notifications</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Consent</strong> (GDPR Art. 6(1)(a)). We only send
-                  broadcast messages if you have explicitly opted in. You can withdraw consent
-                  at any time via the app settings.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Daily check-in</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Legitimate interest</strong> (GDPR Art. 6(1)(f)) to
-                  operate the engagement programme.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-[var(--shop-cream)]">Online presence counter</p>
-                <p className="text-zinc-400">
-                  Legal basis: <strong>Legitimate interest</strong> (GDPR Art. 6(1)(f)) to
-                  display an approximate count of currently active users. This is a minimal
-                  presence indicator, not user tracking.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* 4. Retention */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              4. How long do we keep your data?
-            </h3>
-            <ul className="list-disc space-y-1.5 pl-5">
-              <li>
-                <strong>Order requests:</strong> Retained for up to 1 year after the last
-                communication to manage ongoing conversations, then deleted or anonymised.
-              </li>
-              <li>
-                <strong>Referral data:</strong> Retained while you remain an active user of the
-                app. If you request erasure, referral data is anonymised within 30 days.
-              </li>
-              <li>
-                <strong>Giveaway participation:</strong> Retained until 6 months after the
-                giveaway ends, after which only winner information is kept for prize fulfilment
-                records.
-              </li>
-              <li>
-                <strong>Consent records:</strong> Retained for up to 3 years to demonstrate
-                GDPR compliance.
-              </li>
-              <li>
-                <strong>Daily check-in and presence data:</strong> Retained while you remain
-                active. Reset after 90 days of inactivity.
-              </li>
-            </ul>
-          </section>
-
-          {/* 5. Your rights */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              5. Your rights under GDPR
-            </h3>
-            <p>You have the following rights regarding your personal data:</p>
-            <ul className="mt-2 list-disc space-y-1.5 pl-5">
-              <li><strong>Right of access:</strong> Request a copy of the data we hold about you.</li>
-              <li><strong>Right to rectification:</strong> Request correction of inaccurate data.</li>
-              <li><strong>Right to erasure (&quot;right to be forgotten&quot;):</strong> Request deletion of your data, subject to legal retention requirements.</li>
-              <li><strong>Right to restriction of processing:</strong> Request that we limit how we use your data.</li>
-              <li><strong>Right to data portability:</strong> Request your data in a structured, machine-readable format.</li>
-              <li><strong>Right to object:</strong> Object to processing based on legitimate interests, including broadcast messaging.</li>
-              <li><strong>Right to withdraw consent:</strong> Withdraw any consent you have given at any time (e.g., broadcast opt-out, leaderboard opt-out).</li>
-            </ul>
-            <p className="mt-3">
-              To exercise any of these rights, contact us via the Telegram bot. We will
-              respond within 30 days as required by GDPR.
-            </p>
-            <p className="mt-2">
-              You also have the right to lodge a complaint with the Latvian data protection
-              authority (Datu valsts inspekcija) if you believe your rights have been violated.
-            </p>
-          </section>
-
-          {/* 6. Data processors */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              6. Who processes your data?
-            </h3>
-            <p>
-              We use the following service providers who process your data on our behalf
-              (data processors):
-            </p>
-            <ul className="mt-2 list-disc space-y-1.5 pl-5">
-              <li>
-                <strong>Firebase / Google Cloud Platform</strong> (Google LLC, 1600
-                Amphitheatre Parkway, Mountain View, CA 94043, USA). Firebase hosts the
-                application database (Firestore), file storage (Cloud Storage), and
-                server-side logic (Cloud Functions). Data may be transferred to the US
-                under the EU-US Data Privacy Framework. See:
-                <a
-                  href="https://cloud.google.com/terms/data-processing-agreement"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-1 underline decoration-[var(--shop-purple)]/50 hover:decoration-[var(--shop-purple)]"
-                >
-                  Google Cloud DPA
-                </a>.
-              </li>
-              <li>
-                <strong>Telegram</strong> (Telegram Messenger LLP, 71-75 Shelton Street,
-                Covent Garden, London, WC2H 9JQ, UK). Telegram provides the Mini App
-                platform and messaging infrastructure.
-              </li>
-            </ul>
-          </section>
-
-          {/* 7. Data transfers */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              7. International data transfers
-            </h3>
-            <p>
-              Your data is stored on Firebase servers which may be located outside the
-              European Economic Area (EEA). Google Cloud Platform has certified compliance
-              with the EU-US Data Privacy Framework. By using this app, you acknowledge
-              that your data may be transferred to and processed in the United States and
-              other countries where Google operates.
-            </p>
-          </section>
-
-          {/* 8. Changes */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              8. Changes to this policy
-            </h3>
-            <p>
-              We may update this Privacy Policy from time to time. Material changes will be
-              notified to you via the Mini App or through Telegram. Continued use of the
-              app after changes constitutes acceptance of the updated policy.
-            </p>
-          </section>
+          <LegalDocBody doc="privacy" />
         </div>
 
         {/* Back button */}
         <Button onClick={onBack} variant="primary" size="lg" fullWidth className="mt-6">
-          ← Back
+          {t('legal.back')}
         </Button>
 
         {/* Disclaimer */}
         <p className="mt-4 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-500/70">
-          ⚠️ DRAFT — This privacy policy is a template. It must be reviewed by a qualified
-          lawyer before public launch.
+          {t('legal.disclaimerPrivacy')}
         </p>
       </article>
     </div>

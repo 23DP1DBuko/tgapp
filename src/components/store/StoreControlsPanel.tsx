@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+
 type StoreControlsPanelProps = {
   telegramGateMessage: string | null
   telegramBotLink: string
@@ -9,6 +11,8 @@ export function StoreControlsPanel({
   telegramBotLink,
   onCloseGate,
 }: StoreControlsPanelProps) {
+  const { t } = useI18n()
+
   if (!telegramGateMessage) {
     return null
   }
@@ -18,7 +22,7 @@ export function StoreControlsPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-            Open In Telegram
+            {t('gate.openInTelegram')}
           </p>
           <p className="mt-2 text-sm leading-6 text-[var(--shop-muted)]">
             {telegramGateMessage}
@@ -29,7 +33,7 @@ export function StoreControlsPanel({
           onClick={onCloseGate}
           className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
         >
-          Close
+          {t('gate.close')}
         </button>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
@@ -39,14 +43,14 @@ export function StoreControlsPanel({
           rel="noreferrer"
           className="rounded-[22px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-white"
         >
-          Open Telegram
+          {t('gate.openTelegram')}
         </a>
         <button
           type="button"
           onClick={onCloseGate}
           className="rounded-[22px] border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
         >
-          Keep Browsing
+          {t('gate.keepBrowsing')}
         </button>
       </div>
     </article>

@@ -1,7 +1,9 @@
+import { getReducedMotion } from './motionPrefs'
+
 /**
  * Wraps a state-changing callback with the View Transitions API.
  *
- * - Skips entirely when `prefers-reduced-motion: reduce` is active
+ * - Skips entirely when reduced motion is active (OS preference or manual override)
  * - Uses `document.startViewTransition()` when available
  * - Falls back to a simple `requestAnimationFrame` callback
  * - Designed for catalog → product detail navigation
@@ -13,10 +15,7 @@
  */
 export function withViewTransition(callback: () => void): void {
   // Respect reduced motion — skip view transition entirely
-  if (
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  ) {
+  if (typeof window !== 'undefined' && getReducedMotion()) {
     callback()
     return
   }

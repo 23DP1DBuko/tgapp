@@ -3,7 +3,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useOnlineUsers } from '../hooks/useOnlineUsers'
 
 import { AppShell } from '../components/layout/AppShell'
-import { AdminDashboard } from '../components/admin/AdminDashboard'
 import { NotificationBanner } from '../components/ui/NotificationBanner'
 import { CartPanel } from '../components/cart/CartPanel'
 import { StoreCatalogPanel } from '../components/product/StoreCatalogPanel'
@@ -24,6 +23,11 @@ import {
   removeStoredSessionValue,
 } from '../lib/storage'
 import {
+  readUserStateJson,
+  writeUserStateJson,
+  removeUserStateValue,
+} from '../lib/userState'
+import {
   canUseBrowserAdminFallback,
   verifyTelegramAdminAccess,
 } from '../lib/telegram/admin'
@@ -31,12 +35,16 @@ import { readRouteFromHash } from '../lib/storeRoute'
 import { getTelegramWebAppState, isDevMockEnabled, triggerHapticNotification } from '../lib/telegram/webApp'
 import { useTelegramBackButton } from '../hooks/useTelegramBackButton'
 import { listCampaigns } from '../lib/firebase/campaigns'
+import { subscribeToGiveaways } from '../lib/firebase/giveaways'
+import type { Giveaway } from '../types/rewards'
 import { fetchAdminAnalytics } from '../lib/firebase/analytics'
 import { checkTermsAccepted, withdrawConsent } from '../lib/firebase/consent'
 import { ConsentScreen } from '../components/legal/ConsentScreen'
 import { PrivacyPolicy } from '../components/legal/PrivacyPolicy'
 import { TermsOfService } from '../components/legal/TermsOfService'
 import { AboutPage } from '../components/legal/AboutPage'
+import { PreferencesPanel } from '../components/settings/PreferencesPanel'
+import { useI18n } from '../lib/i18n'
 import type { AnalyticsResult } from '../lib/firebase/analytics'
 import type { CheckoutSuccessSnapshot } from '../types/cart'
 import type { Campaign } from '../types/campaign'
@@ -61,12 +69,15 @@ const RewardsTasksPanel = lazy(async () => {
   return { default: module.RewardsTasksPanel }
 })
 
-const BuyerPollPanel = lazy(async () => {
-  const module = await import('../components/poll/BuyerPollPanel')
-  return { default: module.BuyerPollPanel }
+// The admin dashboard (and its recharts analytics) is only needed by verified
+// admins — lazy-load it so buyers never download the charting library.
+const AdminDashboard = lazy(async () => {
+  const module = await import('../components/admin/AdminDashboard')
+  return { default: module.AdminDashboard }
 })
 
 const CHECKOUT_SUCCESS_STORAGE_KEY = 'yungwear-checkout-success'
+const CONSENT_STORAGE_KEY = 'yungwear-consent-accepted'
 
 type PersistedCheckoutSuccessState = {
   orderId: string | null
@@ -74,6 +85,7 @@ type PersistedCheckoutSuccessState = {
 }
 
 export function HomePage() {
+  const { t } = useI18n()
   const { initData, isTelegram, user } = getTelegramWebAppState()
   const { products, isLoading, errorMessage, reloadProducts } = useProducts()
   const hasTelegramBuyerAccess = Boolean(isTelegram && initData && user)
@@ -90,13 +102,29 @@ export function HomePage() {
 
   const nav = useStoreNavigation(hasTelegramBuyerAccess)
 
+  // Catalog finished loading (without an error) — cart pruning must wait for this
+  // or a page reload would wipe the restored cart while products are still loading.
+  const productsLoaded = !isLoading && !errorMessage
+
   // ── Network status (offline detection) ──
   const { isOnline, wasOffline, clearWasOffline } = useNetworkStatus()
 
   const [notification, setNotification] = useState<string | null>(null)
 
+  // Product ids used as prizes in non-draft giveaways — they stay visible in
+  // the catalog but cannot be bought (add-to-cart is hidden and any existing
+  // cart items pointing at them are pruned). Derived from the giveaways
+  // collection (public read), refreshed on mount alongside campaigns.
+  const [giveawayPrizeProductIds, setGiveawayPrizeProductIds] = useState<string[]>([])
+  // Products whose giveaway has already been drawn (finished/announced) —
+  // shown as "Given Away" instead of the amber "Giveaway Prize" badge.
+  const [givenAwayProductIds, setGivenAwayProductIds] = useState<string[]>([])
+
   // ── Consent state (GDPR) ──
   const [showConsent, setShowConsent] = useState<boolean | null>(null) // null = loading
+  // True when the consent status could not be verified (API/network error).
+  // The store stays blocked either way (M5: fail closed), this only explains why.
+  const [consentCheckFailed, setConsentCheckFailed] = useState(false)
 
   // Check if user has accepted terms on mount
   useEffect(() => {
@@ -105,20 +133,16 @@ export function HomePage() {
       return
     }
 
-    // Check local storage first for fast path
-    const locallyAccepted = (() => {
-      try { return localStorage.getItem('yungwear-consent-accepted') } catch { return null }
-    })()
-    if (locallyAccepted === 'true') {
+    // Check local storage first for fast path (per-user key, M3)
+    const locallyAccepted = readUserStateJson<boolean>(CONSENT_STORAGE_KEY, false)
+    if (locallyAccepted) {
       setShowConsent(false)
       return
     }
 
     // Dev mock: skip the API call entirely, auto-accept locally
     if (isDevMockEnabled()) {
-      try {
-        localStorage.setItem('yungwear-consent-accepted', 'true')
-      } catch { /* ignore */ }
+      writeUserStateJson(CONSENT_STORAGE_KEY, true)
       setShowConsent(false)
       return
     }
@@ -126,20 +150,25 @@ export function HomePage() {
     let cancelled = false
     async function checkConsent() {
       try {
-        const accepted = await checkTermsAccepted(initData)
+        const status = await checkTermsAccepted(initData)
         if (!cancelled) {
-          if (accepted) {
+          if (status === 'accepted') {
             // Cache locally so we don't check on every load
-            try {
-              localStorage.setItem('yungwear-consent-accepted', 'true')
-            } catch { /* ignore */ }
+            writeUserStateJson(CONSENT_STORAGE_KEY, true)
             setShowConsent(false)
           } else {
+            // Not accepted — or the status could not be verified. Either way
+            // the store stays blocked behind the consent screen (M5: fail
+            // closed; never open the store on a failed consent check).
+            setConsentCheckFailed(status === 'error')
             setShowConsent(true)
           }
         }
       } catch {
-        if (!cancelled) setShowConsent(false) // Fail open to not block users
+        if (!cancelled) {
+          setConsentCheckFailed(true)
+          setShowConsent(true)
+        }
       }
     }
 
@@ -148,20 +177,21 @@ export function HomePage() {
   }, [initData])
 
   const handleConsentAccepted = useCallback(() => {
-    try {
-      localStorage.setItem('yungwear-consent-accepted', 'true')
-    } catch { /* ignore */ }
+    writeUserStateJson(CONSENT_STORAGE_KEY, true)
+    setConsentCheckFailed(false)
     setShowConsent(false)
-  }, [])
+    // Always land on the catalog after accepting — never leave the user on the
+    // legal page that was shown behind the consent sheet (privacy/terms/about).
+    nav.setStoreScreen('catalog')
+  }, [nav])
 
   const handleWithdrawConsent = useCallback(async () => {
     if (!initData) return
     const result = await withdrawConsent(initData)
     if (result.ok) {
       // Clear local cache so consent screen shows again on next load
-      try {
-        localStorage.removeItem('yungwear-consent-accepted')
-      } catch { /* ignore */ }
+      removeUserStateValue(CONSENT_STORAGE_KEY)
+      setConsentCheckFailed(false)
       triggerHapticNotification('error')
       setShowConsent(true) // Show consent screen again
     }
@@ -198,7 +228,7 @@ export function HomePage() {
       case 'likes':
       case 'orders':
       case 'rewards':
-      case 'polls':
+      case 'preferences':
       case 'privacy':
       case 'terms':
       case 'about':
@@ -217,6 +247,15 @@ export function HomePage() {
 
   // ── Cart & likes (need requireTelegramAccess + productIdSet) ──
 
+  const giveawayPrizeProductIdSet = useMemo(
+    () => new Set(giveawayPrizeProductIds),
+    [giveawayPrizeProductIds],
+  )
+  const givenAwayProductIdSet = useMemo(
+    () => new Set(givenAwayProductIds),
+    [givenAwayProductIds],
+  )
+
   const {
     cartItems,
     checkoutSubtotal,
@@ -224,11 +263,15 @@ export function HomePage() {
     cartCount,
     handleAddToCart,
     handleRemoveFromCart,
+    handleRestoreItem,
     clearCart,
   } = useCart({
     requireTelegramAccess: nav.requireTelegramAccess,
     productIdSet,
     availableProductIdSet,
+    giveawayPrizeProductIdSet,
+    givenAwayProductIdSet,
+    productsLoaded,
     initData,
     onError: setNotification,
   })
@@ -260,6 +303,7 @@ export function HomePage() {
   } = usePromo({
     checkoutSubtotal,
     promoCodeRaw: nav.promoCodeRaw,
+    initData,
   })
 
   // ── Checkout initial state detection ──
@@ -442,6 +486,45 @@ export function HomePage() {
     return () => { isCancelled = true }
   }, [])
 
+  // Live-subscribe to giveaways to derive the set of prize product ids
+  // (non-draft giveaways only — draft prizes can still be changed by the
+  // admin). Scheduled/live giveaways mark the product as an active prize;
+  // finished / announced giveaways mark it as given away. A live giveaway
+  // wins over a drawn one when the same product appears in both.
+  useEffect(() => {
+    function applyGiveaways(giveaways: Giveaway[]) {
+      const prizeIds = new Set<string>()
+      const givenAwayIds = new Set<string>()
+      for (const giveaway of giveaways) {
+        if (giveaway.status === 'draft') continue
+        // Admin toggle: prizes were unlocked for sale (e.g. winner declined)
+        // — this giveaway no longer blocks its products in the store.
+        if (giveaway.prizesForSale === true) continue
+        const drawn = giveaway.status === 'finished' || giveaway.status === 'announced'
+        for (const prize of giveaway.prizes) {
+          if (!prize.productId) continue
+          if (drawn) {
+            givenAwayIds.add(prize.productId)
+          } else {
+            prizeIds.add(prize.productId)
+          }
+        }
+      }
+      setGiveawayPrizeProductIds(Array.from(prizeIds))
+      // A product that is a prize in a still-running giveaway keeps the
+      // active badge — don't let a drawn giveaway downgrade it.
+      setGivenAwayProductIds(
+        Array.from(givenAwayIds).filter((id) => !prizeIds.has(id)),
+      )
+    }
+
+    const unsubscribe = subscribeToGiveaways(applyGiveaways, () => {
+      // Fail open for display: if giveaways can't be loaded the catalog
+      // simply shows no prize badges. Checkout remains the final gate.
+    })
+    return unsubscribe
+  }, [])
+
   // Fetch analytics when admin view is active
   useEffect(() => {
     if (nav.activeView !== 'admin' || !canManageProducts || !initData) return
@@ -523,13 +606,15 @@ export function HomePage() {
       showConsent={showConsent}
       bottomNavVisible={
         nav.activeView === 'store' &&
+        nav.storeScreen !== 'product' &&
         nav.storeScreen !== 'checkout' &&
         nav.storeScreen !== 'success' &&
+        nav.storeScreen !== 'preferences' &&
         nav.storeScreen !== 'privacy' &&
         nav.storeScreen !== 'terms' &&
         nav.storeScreen !== 'about'
       }
-      onlineUsersCount={useOnlineUsers(user?.id)}
+      onlineUsersCount={useOnlineUsers(user?.id, initData)}
       isModalOpen={isModalOpen}
       storeScreen={nav.storeScreen}
       likedCount={likedCount}
@@ -545,6 +630,7 @@ export function HomePage() {
       onOpenPrivacy={() => nav.setStoreScreen('privacy')}
       onOpenTerms={() => nav.setStoreScreen('terms')}
       onOpenAbout={() => nav.setStoreScreen('about')}
+      onOpenPreferences={nav.handleOpenPreferences}
       onTripleTap={nav.handleTripleTap}
       onWithdrawConsent={handleWithdrawConsent}
       hasUnreadLikes={hasUnreadLikes}
@@ -554,6 +640,7 @@ export function HomePage() {
         {showConsent === true && (
           <ConsentScreen
             initData={initData}
+            checkFailed={consentCheckFailed}
             onAccepted={handleConsentAccepted}
             onOpenPrivacy={() => nav.setStoreScreen('privacy')}
             onOpenTerms={() => nav.setStoreScreen('terms')}
@@ -585,11 +672,14 @@ export function HomePage() {
 
             {nav.storeScreen === 'catalog' || nav.storeScreen === 'likes' ? (
               <StoreCatalogPanel
+                initData={initData}
                 storeScreen={nav.storeScreen}
                 isLoading={isLoading}
                 errorMessage={errorMessage}
                 products={products}
                 sortedProducts={filtering.sortedProducts}
+                giveawayPrizeProductIds={giveawayPrizeProductIds}
+                givenAwayProductIds={givenAwayProductIds}
                 likedProductIds={likedProductIds}
                 categoryOptions={filtering.categoryOptions}
                 selectedCategory={nav.selectedCategory}
@@ -607,9 +697,9 @@ export function HomePage() {
                 onAddToCart={handleAddToCart}
                 onRemoveFromCart={handleRemoveFromCart}
                 cartItems={cartItems}
-                initData={initData}
                 campaigns={campaigns}
                 onQuickViewChange={setIsModalOpen}
+                onOpenRewards={nav.handleOpenRewards}
               />
             ) : null}
 
@@ -617,27 +707,30 @@ export function HomePage() {
               filtering.selectedProduct ? (
                 <>
                   <PageHeader
-                    label={nav.storeCollectionView === 'liked' ? 'Likes' : 'Catalog'}
+                    label={nav.storeCollectionView === 'liked' ? t('home.likes') : t('home.catalog')}
                     onClick={nav.handleBackFromProduct}
                   />
-                  <Suspense fallback={<StorePanelLoadingState label="Product Detail" />}>
+                  <Suspense fallback={<StorePanelLoadingState label={t('loading.productDetail')} />}>
                     <ProductDetailPanel
                       key={filtering.selectedProduct.id}
                       product={filtering.selectedProduct}
                       isInCart={filtering.isSelectedProductInCart}
                       isLiked={filtering.isSelectedProductLiked}
+                      isGiveawayPrize={giveawayPrizeProductIdSet.has(filtering.selectedProduct.id)}
+                      isGivenAway={givenAwayProductIdSet.has(filtering.selectedProduct.id)}
                       onAddToCart={handleAddToCart}
                       onRemoveFromCart={handleRemoveFromCart}
                       onToggleLike={handleToggleLike}
+                      onOpenRewards={nav.handleOpenRewards}
                       initData={initData}
                     />
                   </Suspense>
                 </>
               ) : (
                 <StoreEmptyState
-                  title="No Product Selected"
-                  description="Go back to the catalog and pick a piece."
-                  actionLabel="Back To Catalog"
+                  title={t('empty.noProductSelected')}
+                  description={t('empty.noProductSelectedDesc')}
+                  actionLabel={t('empty.backToCatalog')}
                   onAction={nav.handleOpenCatalog}
                 />
               )
@@ -645,9 +738,10 @@ export function HomePage() {
 
             {nav.storeScreen === 'cart' ? (
               <>
-                <PageHeader label="Catalog" onClick={nav.handleOpenCatalog} />                  <CartPanel
+                <PageHeader label={t('home.catalog')} onClick={nav.handleOpenCatalog} />                  <CartPanel
                     items={cartItems}
                     onRemoveItem={handleRemoveFromCart}
+                    onRestoreItem={handleRestoreItem}
                     onContinueShopping={nav.handleOpenCatalog}
                     onProceedToCheckout={handleOpenCheckout}
                   />
@@ -655,23 +749,12 @@ export function HomePage() {
             ) : null}
 
             {nav.storeScreen === 'rewards' ? (
-              <Suspense fallback={<StorePanelLoadingState label="Rewards" />}>
+              <Suspense fallback={<StorePanelLoadingState label={t('loading.rewards')} />}>
                 <RewardsTasksPanel
                   initData={initData}
                   hasTelegramAccess={hasTelegramBuyerAccess}
                   onBack={nav.handleOpenCatalog}
                   onGiveawayDetailChange={setIsModalOpen}
-                  onOpenPolls={nav.handleOpenPolls}
-                />
-              </Suspense>
-            ) : null}
-
-            {nav.storeScreen === 'polls' ? (
-              <Suspense fallback={<StorePanelLoadingState label="Community Polls" />}>
-                <BuyerPollPanel
-                  initData={initData}
-                  hasTelegramAccess={hasTelegramBuyerAccess}
-                  onBack={nav.handleOpenCatalog}
                 />
               </Suspense>
             ) : null}
@@ -692,8 +775,16 @@ export function HomePage() {
               />
             ) : null}
 
+            {nav.storeScreen === 'preferences' ? (
+              <PreferencesPanel
+                initData={initData}
+                onBack={nav.handleOpenCatalog}
+                onError={setNotification}
+              />
+            ) : null}
+
             {nav.storeScreen === 'orders' ? (
-              <Suspense fallback={<StorePanelLoadingState label="My Orders" />}>
+              <Suspense fallback={<StorePanelLoadingState label={t('loading.myOrders')} />}>
                 {user?.id ? (
                   <BuyerOrdersPanel
                     initData={initData}
@@ -708,9 +799,9 @@ export function HomePage() {
             {nav.storeScreen === 'checkout' || nav.storeScreen === 'success' ? (
               <>
                 {nav.storeScreen === 'checkout' ? (
-                  <PageHeader label="Cart" onClick={nav.handleOpenCart} />
+                  <PageHeader label={t('cart.title')} onClick={nav.handleOpenCart} />
                 ) : null}
-                <Suspense fallback={<StorePanelLoadingState label="Checkout" />}>
+                <Suspense fallback={<StorePanelLoadingState label={t('loading.checkout')} />}>
                   <CheckoutPanel
                     items={cartItems}
                     form={checkoutForm}
@@ -742,18 +833,31 @@ export function HomePage() {
             ) : null}
           </>
         ) : (
-          <AdminDashboard
-            products={products}
-            analytics={analytics ?? undefined}
-            initData={initData}
-            isTelegram={isTelegram}
-            user={user}
-            isAdminAccessLoading={isAdminAccessLoading}
-            canManageProducts={canManageProducts}
-            adminSubView={nav.adminSubView}
-            onSelectSubView={nav.setAdminSubView}
-            onProductsChanged={reloadProducts}
-          />
+          <Suspense
+            fallback={
+              <div className="mt-4 rounded-[24px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+                  Admin Access
+                </p>
+                <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">
+                  Loading admin panel&hellip;
+                </p>
+              </div>
+            }
+          >
+            <AdminDashboard
+              products={products}
+              analytics={analytics ?? undefined}
+              initData={initData}
+              isTelegram={isTelegram}
+              user={user}
+              isAdminAccessLoading={isAdminAccessLoading}
+              canManageProducts={canManageProducts}
+              adminSubView={nav.adminSubView}
+              onSelectSubView={nav.setAdminSubView}
+              onProductsChanged={reloadProducts}
+            />
+          </Suspense>
         )}
       </section>
     </AppShell>
@@ -767,13 +871,14 @@ type StorePanelLoadingStateProps = {
 }
 
 function StorePanelLoadingState({ label }: StorePanelLoadingStateProps) {
+  const { t } = useI18n()
   return (
     <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
       <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
         {label}
       </p>
       <p className="mt-4 text-sm leading-6 text-[var(--shop-muted)]">
-        Loading this panel...
+        {t('loading.panel')}
       </p>
     </article>
   )

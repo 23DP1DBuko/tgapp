@@ -1,4 +1,5 @@
 import type { Order } from '../types/order'
+import type { TranslateFn, TranslationKey } from './i18n/translations'
 
 export type BuyerOrderProgressStep = {
   key: string
@@ -39,6 +40,26 @@ export function formatOrderStatus(status: Order['status']) {
   }
 }
 
+/** Translation key for a status — used by buyer-facing components. */
+export function getOrderStatusTranslationKey(
+  status: Order['status'],
+): TranslationKey {
+  switch (status) {
+    case 'waiting_for_payment':
+      return 'status.waitingForPayment'
+    case 'ready_for_meetup':
+      return 'status.readyForMeetup'
+    case 'paid':
+      return 'status.paid'
+    case 'completed':
+      return 'status.completed'
+    case 'cancelled':
+      return 'status.cancelled'
+    default:
+      return 'status.new'
+  }
+}
+
 export function getOrderStatusBadgeClassName(status: Order['status']) {
   switch (status) {
     case 'paid':
@@ -56,63 +77,68 @@ export function getOrderStatusBadgeClassName(status: Order['status']) {
   }
 }
 
-export function getBuyerOrderStatusHint(order: Order) {
+export function getBuyerOrderStatusHint(order: Order, t: TranslateFn) {
   switch (order.status) {
     case 'waiting_for_payment':
-      return 'Payment still needs to be sent and confirmed.'
+      return t('hint.waiting')
     case 'paid':
       return order.fulfillmentType === 'delivery'
-        ? 'Payment is confirmed. Delivery follow-up comes next.'
-        : 'Payment is confirmed. Meetup timing will follow in Telegram chat.'
+        ? t('hint.paidDelivery')
+        : t('hint.paidMeetup')
     case 'ready_for_meetup':
-      return 'Your piece is ready. Watch Telegram chat for the final meetup details.'
+      return t('hint.ready')
     case 'completed':
-      return 'This order is finished.'
+      return t('hint.completed')
     case 'cancelled':
-      return 'This order was cancelled.'
+      return t('hint.cancelled')
     default:
-      return 'Your request was saved and is waiting for admin follow-up.'
+      return t('hint.new')
   }
 }
 
-export function formatBuyerMeetupLocation(value: string) {
+export function formatBuyerMeetupLocation(value: string, t: TranslateFn) {
   switch (value) {
     case 'origo_center':
-      return 'Origo Center'
+      return t('loc.origoCenter')
     case 'old_town':
-      return 'Old Town'
+      return t('loc.oldTown')
     case 'akropole':
-      return 'Akropole'
+      return t('loc.akropole')
     default:
-      return 'Not selected'
+      // Custom locations are stored verbatim on the order doc.
+      return value ? value : t('co.meetupNotSelected')
   }
 }
 
-export function formatBuyerMeetupTime(value: string) {
+export function formatBuyerMeetupTime(value: string, t: TranslateFn) {
   switch (value) {
     case 'today_evening':
-      return 'Today Evening'
+      return t('time.todayEvening')
     case 'tomorrow_afternoon':
-      return 'Tomorrow Afternoon'
+      return t('time.tomorrowAfternoon')
     case 'this_weekend':
-      return 'This Weekend'
+      return t('time.thisWeekend')
     default:
-      return 'Not selected'
+      // Custom times are stored verbatim on the order doc.
+      return value ? value : t('co.timeNotSelected')
   }
 }
 
-export function getBuyerOrderProgressSteps(order: Order): BuyerOrderProgressStep[] {
+export function getBuyerOrderProgressSteps(
+  order: Order,
+  t: TranslateFn,
+): BuyerOrderProgressStep[] {
   if (order.status === 'cancelled') {
     return [
       {
         key: 'new',
-        label: 'Request',
+        label: t('prog.request'),
         isComplete: true,
         isCurrent: false,
       },
       {
         key: 'cancelled',
-        label: 'Cancelled',
+        label: t('prog.cancelled'),
         isComplete: true,
         isCurrent: true,
       },
@@ -122,13 +148,13 @@ export function getBuyerOrderProgressSteps(order: Order): BuyerOrderProgressStep
   const steps = [
     {
       key: 'new',
-      label: 'Request',
+      label: t('prog.request'),
       match: (status: Order['status']) => status === 'new',
       isReached: () => true,
     },
     {
       key: 'paid',
-      label: order.paymentMethod === 'usdt' ? 'Payment' : 'Confirmed',
+      label: order.paymentMethod === 'usdt' ? t('prog.payment') : t('prog.confirmed'),
       match: (status: Order['status']) => status === 'waiting_for_payment' || status === 'paid',
       isReached: (status: Order['status']) =>
         status === 'waiting_for_payment' ||
@@ -138,14 +164,14 @@ export function getBuyerOrderProgressSteps(order: Order): BuyerOrderProgressStep
     },
     {
       key: 'fulfillment',
-      label: order.fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup',
+      label: order.fulfillmentType === 'delivery' ? t('prog.delivery') : t('prog.meetup'),
       match: (status: Order['status']) => status === 'ready_for_meetup',
       isReached: (status: Order['status']) =>
         status === 'ready_for_meetup' || status === 'completed',
     },
     {
       key: 'completed',
-      label: 'Done',
+      label: t('prog.done'),
       match: (status: Order['status']) => status === 'completed',
       isReached: (status: Order['status']) => status === 'completed',
     },
@@ -205,7 +231,10 @@ export function summarizeBuyerOrders(orders: Order[]): BuyerOrderSummary {
   )
 }
 
-export function groupBuyerOrdersByRecency(orders: Order[]): BuyerOrderGroup[] {
+export function groupBuyerOrdersByRecency(
+  orders: Order[],
+  t: TranslateFn,
+): BuyerOrderGroup[] {
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startOfWeek = new Date(startOfToday)
@@ -215,10 +244,10 @@ export function groupBuyerOrdersByRecency(orders: Order[]): BuyerOrderGroup[] {
   startOfWeek.setDate(startOfWeek.getDate() - mondayOffset)
 
   const groups: BuyerOrderGroup[] = [
-    { key: 'today', label: 'Today', orders: [] },
-    { key: 'this_week', label: 'This Week', orders: [] },
-    { key: 'earlier', label: 'Earlier', orders: [] },
-    { key: 'pending', label: 'Pending Time', orders: [] },
+    { key: 'today', label: t('groups.today'), orders: [] },
+    { key: 'this_week', label: t('groups.thisWeek'), orders: [] },
+    { key: 'earlier', label: t('groups.earlier'), orders: [] },
+    { key: 'pending', label: t('groups.pending'), orders: [] },
   ]
 
   orders.forEach((order) => {

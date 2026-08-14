@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { listOrders, updateOrderStatus } from '../../lib/firebase/orders'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
+import {
+  formatOrderStatus,
+  getOrderStatusBadgeClassName,
+} from '../../lib/orderStatus'
 import type { Order } from '../../types/order'
+import { AdminFeedbackBanner } from '../ui/AdminFeedbackBanner'
 
 // ── Display type ──
 
 type DisplayStatus = 'NEW' | 'PAID' | 'WAITING' | 'READY_MEETUP' | 'COMPLETED' | 'CANCELLED'
 
-type MeetupLocationLabel = 'Origo Center' | 'Old Town' | 'Akropole' | 'Not selected'
-type MeetupTimeLabel = 'Today Evening' | 'Tomorrow Afternoon' | 'This Weekend' | 'Not selected'
+
 
 type OrderCardItem = {
   id: string
@@ -21,8 +25,8 @@ type OrderCardItem = {
   status: DisplayStatus
   fulfillmentType: 'delivery' | 'meetup'
   paymentMethod: 'meetup_cash' | 'usdt'
-  meetupLocation: MeetupLocationLabel
-  meetupTime: MeetupTimeLabel
+  meetupLocation: string
+  meetupTime: string
   meetupNotes: string
   itemsDescription: string
   subtotal: number
@@ -47,21 +51,21 @@ function toDisplayStatus(s: Order['status']): DisplayStatus {
   }
 }
 
-function fmtMeetupLocation(v: string): MeetupLocationLabel {
+function fmtMeetupLocation(v: string): string {
   switch (v) {
     case 'origo_center': return 'Origo Center'
     case 'old_town': return 'Old Town'
     case 'akropole': return 'Akropole'
-    default: return 'Not selected'
+    default: return v || 'Not selected'
   }
 }
 
-function fmtMeetupTime(v: string): MeetupTimeLabel {
+function fmtMeetupTime(v: string): string {
   switch (v) {
     case 'today_evening': return 'Today Evening'
     case 'tomorrow_afternoon': return 'Tomorrow Afternoon'
     case 'this_weekend': return 'This Weekend'
-    default: return 'Not selected'
+    default: return v || 'Not selected'
   }
 }
 
@@ -93,15 +97,6 @@ function toCardItem(o: Order): OrderCardItem {
     cancelReason: o.cancelReason || '',
     raw: o,
   }
-}
-
-const STATUS_STYLE: Record<DisplayStatus, { chip: string; text: string }> = {
-  NEW: { chip: 'bg-white/8 text-white/80', text: 'text-white/80' },
-  PAID: { chip: 'bg-[#A855F7]/18 text-[#A855F7]', text: 'text-[#A855F7]' },
-  WAITING: { chip: 'bg-amber-300/15 text-amber-200', text: 'text-amber-200' },
-  READY_MEETUP: { chip: 'bg-[#A855F7]/12 text-[#A855F7]', text: 'text-[#A855F7]' },
-  COMPLETED: { chip: 'bg-emerald-400/15 text-emerald-200', text: 'text-emerald-200' },
-  CANCELLED: { chip: 'bg-[#E61E26]/15 text-[#E61E26]', text: 'text-[#E61E26]' },
 }
 
 // ── Filter types ──
@@ -139,6 +134,10 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
   const [copiedSummaryId, setCopiedSummaryId] = useState<string | null>(null)
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [confirmAction, setConfirmAction] = useState<{
+    orderId: string
+    status: Order['status']
+  } | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
 
@@ -247,6 +246,17 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
     }
   }
 
+  function confirmPendingStatusChange(card: OrderCardItem) {
+    const action = confirmAction
+
+    if (!action) {
+      return
+    }
+
+    setConfirmAction(null)
+    void handleUpdateStatus(card.raw, action.status)
+  }
+
   async function handleCopySummary(card: OrderCardItem) {
     const summary = buildSummaryText(card)
     try {
@@ -275,6 +285,9 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
       if (expanding) triggerHapticFeedback('light')
       return expanding ? id : null
     })
+    // Dismiss any pending confirm — the accordion shows one card at a time,
+    // so a pending action never survives a switch to another order.
+    setConfirmAction(null)
   }
 
   // ── Render ──
@@ -301,14 +314,14 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search buyer, @handle, order ID, item..."
-          className="w-full rounded-2xl border border-white/10 bg-[#1C1622] px-4 py-3 pr-20 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/60 focus:border-[#E61E26]/50"
+          className="w-full rounded-2xl border border-white/10 bg-[var(--shop-panel-solid)] px-4 py-3 pr-20 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/60 focus:border-[var(--shop-red)]/50"
         />
         {/* Filter-pending pulse dot */}
         {isFilterPending ? (
           <span className="absolute right-[4.5rem] top-1/2 -translate-y-1/2">
             <span className="relative flex h-3 w-3">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#A855F7]/40" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-[#A855F7]" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--shop-purple)]/40" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-[var(--shop-purple)]" />
             </span>
           </span>
         ) : null}
@@ -321,7 +334,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
             setSearchQuery('')
             setDebouncedSearchQuery('')
           }}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-xl bg-[#E61E26] px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_2px_8px_rgba(230,30,38,0.25)]"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-xl bg-[var(--shop-red)] px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_2px_8px_rgba(255,77,90,0.25)]"
         >
           ALL
         </button>
@@ -343,8 +356,8 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                 }}
                 className={`rounded-full px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] transition-all ${
                   isActive
-                    ? 'bg-[linear-gradient(135deg,#A855F7,#E61E26)] text-white shadow-[0_4px_14px_rgba(168,85,247,0.25)]'
-                    : 'bg-[#1C1622] text-[var(--shop-muted)]/60 hover:text-[var(--shop-muted)]'
+                    ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white shadow-[0_4px_14px_rgba(168,85,247,0.25)]'
+                    : 'bg-[var(--shop-panel-solid)] text-[var(--shop-muted)]/60 hover:text-[var(--shop-muted)]'
                 }`}
               >
                 {f.label}
@@ -370,8 +383,8 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                 }}
                 className={`rounded-full px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] transition-all ${
                   isActive
-                    ? 'bg-[#A855F7]/20 text-[#A855F7] shadow-[0_0_0_1px_rgba(168,85,247,0.3)]'
-                    : 'bg-[#1C1622] text-[var(--shop-muted)]/50 hover:text-[var(--shop-muted)]'
+                    ? 'bg-[var(--shop-purple)]/20 text-[var(--shop-purple)] shadow-[0_0_0_1px_rgba(168,85,247,0.3)]'
+                    : 'bg-[var(--shop-panel-solid)] text-[var(--shop-muted)]/50 hover:text-[var(--shop-muted)]'
                 }`}
               >
                 {f.label}
@@ -383,25 +396,23 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
 
       {/* ── Error / Empty / Loading states ── */}
       {errorMessage ? (
-        <div className="mt-4 rounded-2xl bg-[#E61E26]/15 px-4 py-3 text-sm text-[var(--shop-cream)]">
-          {errorMessage}
-        </div>
+        <AdminFeedbackBanner tone="error" message={errorMessage} className="mt-4" />
       ) : null}
 
       {isLoading ? (
-        <div className="mt-4 rounded-2xl bg-[#1C1622] px-4 py-3 text-sm text-[var(--shop-muted)]">
+        <div className="mt-4 rounded-2xl bg-[var(--shop-panel-solid)] px-4 py-3 text-sm text-[var(--shop-muted)]">
           Loading saved checkouts...
         </div>
       ) : null}
 
       {!isLoading && !errorMessage && orders.length === 0 ? (
-        <div className="mt-4 rounded-2xl bg-[#1C1622] px-4 py-8 text-center text-sm text-[var(--shop-muted)]">
+        <div className="mt-4 rounded-2xl bg-[var(--shop-panel-solid)] px-4 py-8 text-center text-sm text-[var(--shop-muted)]">
           No saved checkouts yet.
         </div>
       ) : null}
 
       {!isLoading && !errorMessage && orders.length > 0 && cards.length === 0 ? (
-        <div className="mt-4 rounded-2xl bg-[#1C1622] px-4 py-3 text-sm text-[var(--shop-muted)]">
+        <div className="mt-4 rounded-2xl bg-[var(--shop-panel-solid)] px-4 py-3 text-sm text-[var(--shop-muted)]">
           No orders match the current filter.
         </div>
       ) : null}
@@ -414,7 +425,6 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
             const isUpdating = isUpdatingId === card.id
             const isSummaryCopied = copiedSummaryId === card.id
             const isOrderIdCopied = copiedOrderId === card.id
-            const ss = STATUS_STYLE[card.status]
             const tgUrl = telegramUrl(card.buyerHandle)
             const showMeetup =
               card.fulfillmentType === 'meetup' &&
@@ -423,7 +433,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
             return (
               <div
                 key={card.id}
-                className="overflow-hidden rounded-[20px] border border-white/10 bg-[#1C1622] transition-all duration-200"
+                className="overflow-hidden rounded-[20px] border border-white/10 bg-[var(--shop-panel-solid)] transition-all duration-200"
               >
                 {/* ── 3-Column Header (always visible, clickable) ── */}
                 <button
@@ -460,7 +470,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                           target="_blank"
                           rel="noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 rounded-md bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-[#A855F7] transition-colors hover:bg-[#A855F7]/15"
+                          className="inline-flex items-center gap-1 rounded-md bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-[var(--shop-purple)] transition-colors hover:bg-[var(--shop-purple)]/15"
                         >
                           <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="currentColor" aria-hidden="true">
                             <g transform="translate(2, 2)">
@@ -481,7 +491,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                   <div className="flex shrink-0 flex-col justify-center gap-1 px-2">
                     {card.fulfillmentType === 'meetup' ? (
                       <>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#A855F7]/12 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[0.14em] text-[#A855F7]">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--shop-purple)]/12 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
                           🤝 MEETUP
                         </span>
                         {showMeetup ? (
@@ -500,7 +510,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                         💵 CASH
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-[#A855F7]/10 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[0.14em] text-[#A855F7]/80">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[var(--shop-purple)]/10 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[0.14em] text-[var(--shop-purple)]/80">
                         ₮ USDT
                       </span>
                     )}
@@ -512,9 +522,9 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                       {card.totalCost}€
                     </p>
                     <span
-                      className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ss.chip}`}
+                      className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${getOrderStatusBadgeClassName(card.raw.status)}`}
                     >
-                      {card.status}
+                      {formatOrderStatus(card.raw.status).toUpperCase()}
                     </span>
                   </div>
                 </button>
@@ -590,7 +600,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                           href={tgUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="flex-1 rounded-xl border border-[#A855F7]/20 bg-[#A855F7]/10 px-3 py-2.5 text-center text-[9px] font-bold uppercase tracking-[0.16em] text-[#A855F7] transition-colors hover:bg-[#A855F7]/20"
+                          className="flex-1 rounded-xl border border-[var(--shop-purple)]/20 bg-[var(--shop-purple)]/10 px-3 py-2.5 text-center text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-purple)] transition-colors hover:bg-[var(--shop-purple)]/20"
                         >
                           Message Buyer
                         </a>
@@ -610,7 +620,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                           type="button"
                           onClick={() => void handleUpdateStatus(card.raw, 'ready_for_meetup')}
                           disabled={isUpdating}
-                          className="flex-1 rounded-xl bg-[#A855F7]/15 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[#A855F7] transition-colors hover:bg-[#A855F7]/25 disabled:opacity-50"
+                          className="flex-1 rounded-xl bg-[var(--shop-purple)]/15 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-purple)] transition-colors hover:bg-[var(--shop-purple)]/25 disabled:opacity-50"
                         >
                           Ready For Meetup
                         </button>
@@ -622,7 +632,7 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                           type="button"
                           onClick={() => void handleUpdateStatus(card.raw, 'paid')}
                           disabled={isUpdating}
-                          className="flex-1 rounded-xl bg-[#A855F7]/20 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[#A855F7] transition-colors hover:bg-[#A855F7]/30 disabled:opacity-50"
+                          className="flex-1 rounded-xl bg-[var(--shop-purple)]/20 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-purple)] transition-colors hover:bg-[var(--shop-purple)]/30 disabled:opacity-50"
                         >
                           Mark Paid
                         </button>
@@ -634,7 +644,12 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                       card.raw.status === 'ready_for_meetup' ? (
                         <button
                           type="button"
-                          onClick={() => void handleUpdateStatus(card.raw, 'completed')}
+                          onClick={() =>
+                            setConfirmAction({
+                              orderId: card.raw.id,
+                              status: 'completed',
+                            })
+                          }
                           disabled={isUpdating}
                           className="flex-1 rounded-xl bg-emerald-400/15 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-200 transition-colors hover:bg-emerald-400/25 disabled:opacity-50"
                         >
@@ -647,19 +662,53 @@ export function OrderAdminPanel({ initData, isEnabled }: OrderAdminPanelProps) {
                       card.raw.status !== 'completed' ? (
                         <button
                           type="button"
-                          onClick={() => void handleUpdateStatus(card.raw, 'cancelled')}
+                          onClick={() =>
+                            setConfirmAction({
+                              orderId: card.raw.id,
+                              status: 'cancelled',
+                            })
+                          }
                           disabled={isUpdating}
-                          className="flex-1 rounded-xl bg-[#E61E26]/12 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[#E61E26] transition-colors hover:bg-[#E61E26]/25 disabled:opacity-50"
+                          className="flex-1 rounded-xl bg-[var(--shop-red)]/12 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-red)] transition-colors hover:bg-[var(--shop-red)]/25 disabled:opacity-50"
                         >
                           Cancel Order
                         </button>
                       ) : null}
                     </div>
 
+                    {/* ── Terminal-action confirm row ── */}
+                    {confirmAction && confirmAction.orderId === card.id ? (
+                      <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-amber-300">
+                          {confirmAction.status === 'completed'
+                            ? 'Mark this order as completed? This is final.'
+                            : 'Cancel this order? This cannot be undone.'}
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmAction(null)}
+                            disabled={isUpdating}
+                            className="flex-1 rounded-xl border border-white/15 bg-white/8 px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-colors hover:bg-white/14 disabled:opacity-50"
+                          >
+                            Back
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => confirmPendingStatusChange(card)}
+                            disabled={isUpdating}
+                            className="flex-1 rounded-xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-3 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                          >
+                            {isUpdating ? 'UPDATING...' : 'Confirm'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
                     {/* USDT Instructions — only for usdt payments */}
                     {card.paymentMethod === 'usdt' ? (
-                      <div className="mt-2 rounded-2xl border border-[#A855F7]/15 bg-[#A855F7]/8 px-4 py-3">
-                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[#A855F7]/70">
+                      <div className="mt-2 rounded-2xl border border-[var(--shop-purple)]/15 bg-[var(--shop-purple)]/8 px-4 py-3">
+                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--shop-purple)]/70">
                           ₮ USDT Payment
                         </p>
                         <p className="mt-1.5 text-[11px] leading-5 text-[var(--shop-muted)]/80">
@@ -701,7 +750,7 @@ function buildSummaryText(card: OrderCardItem): string {
   const lines = [
     `Order ${card.id}`,
     `Buyer: ${card.buyerName} (${card.buyerHandle || 'no handle'})`,
-    `Status: ${card.status}`,
+    `Status: ${formatOrderStatus(card.raw.status).toUpperCase()}`,
     `Fulfillment: ${card.fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup'}`,
     `Payment: ${card.paymentMethod === 'usdt' ? 'USDT' : 'Meetup Cash'}`,
     `Items: ${card.itemsDescription}`,

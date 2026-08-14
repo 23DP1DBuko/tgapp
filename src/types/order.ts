@@ -36,6 +36,7 @@ export type Order = {
 
 export type CreateOrderInput = {
   initData: string
+  clientOrderId: string
   fullName: CheckoutForm['fullName']
   telegramHandle: CheckoutForm['telegramHandle']
   telegramUserId?: number

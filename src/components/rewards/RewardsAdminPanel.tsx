@@ -17,6 +17,7 @@ import {
 import { uploadGiveawayImage } from '../../lib/firebase/storage'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import { ProductPickerModal } from './ProductPickerModal'
+import { AdminFeedbackBanner } from '../ui/AdminFeedbackBanner'
 import type {
   Giveaway,
   GiveawayInput,
@@ -61,6 +62,7 @@ const EMPTY_GIVEAWAY_FORM: GiveawayFormState = {
   baseEntryTickets: 1,
   taskIds: [],
   taskTickets: {},
+  prizesForSale: false,
   enteredCount: 0,
 }
 
@@ -87,6 +89,7 @@ function giveawayToForm(g: Giveaway): GiveawayFormState {
     baseEntryTickets: g.baseEntryTickets,
     taskIds: g.taskIds ?? [],
     taskTickets: g.taskTickets ?? {},
+    prizesForSale: g.prizesForSale === true,
     enteredCount: g.enteredCount,
   }
 }
@@ -105,17 +108,25 @@ function formToGiveawayInput(form: GiveawayFormState): GiveawayInput {
     baseEntryTickets: form.baseEntryTickets,
     taskIds: form.taskIds,
     taskTickets: form.taskTickets,
+    prizesForSale: form.prizesForSale,
   }
 }
 
 const EMPTY_TASK: TaskInput = {
   title: '',
-  rewardType: 'coupon',
-  rewardValue: '',
   status: 'active',
   sortOrder: 0,
   actionUrl: '',
-  actionLabel: '',
+  taskType: 'custom',
+  requiredCount: undefined,
+}
+
+// Chip labels for the task type selector (admin panel is English-only).
+const TASK_TYPE_LABELS: Record<string, string> = {
+  custom: 'Custom',
+  join_channel: 'Channel',
+  invite_friend: 'Invites',
+  like_product: 'Likes',
 }
 
 export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
@@ -484,12 +495,11 @@ export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
     setEditingTask(t)
     setTaskForm({
       title: t.title,
-      rewardType: t.rewardType,
-      rewardValue: t.rewardValue,
       status: t.status,
       sortOrder: t.sortOrder,
       actionUrl: t.actionUrl ?? '',
-      actionLabel: t.actionLabel ?? '',
+      taskType: t.taskType ?? 'custom',
+      requiredCount: t.requiredCount,
     })
     setShowTaskForm(true)
   }
@@ -529,8 +539,6 @@ export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
       const newStatus = t.status === 'active' ? 'inactive' : 'active'
       await updateTask(initData, t.id, {
         title: t.title,
-        rewardType: t.rewardType,
-        rewardValue: t.rewardValue,
         status: newStatus,
         sortOrder: t.sortOrder,
       })
@@ -599,15 +607,11 @@ export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
 
       {/* ── Feedback Banner ── */}
       {feedback ? (
-        <div
-          className={`mx-5 mt-4 rounded-2xl px-4 py-3 text-sm ${
-            feedback.tone === 'success'
-              ? 'bg-emerald-300/18 text-emerald-100'
-              : 'bg-[var(--shop-red)]/18 text-[var(--shop-cream)]'
-          }`}
-        >
-          {feedback.message}
-        </div>
+        <AdminFeedbackBanner
+          tone={feedback.tone}
+          message={feedback.message}
+          className="mx-5 mt-4"
+        />
       ) : null}
 
       {error ? (
@@ -658,7 +662,7 @@ export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
                 <button
                   type="button"
                   onClick={handleOpenNewGiveaway}
-                  className="mb-4 flex w-full items-center justify-center gap-3 rounded-[24px] border-2 border-dashed border-white/15 bg-[#1C1622]/80 px-4 py-6 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-purple)]/40 hover:text-[var(--shop-purple)]"
+                  className="mb-4 flex w-full items-center justify-center gap-3 rounded-[24px] border-2 border-dashed border-white/15 bg-[var(--shop-panel-solid)]/80 px-4 py-6 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-purple)]/40 hover:text-[var(--shop-purple)]"
                 >
                   <svg viewBox="0 0 16 16" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
                     <path d="M8 2v12M2 8h12" />
@@ -746,7 +750,7 @@ export function RewardsAdminPanel({ initData }: RewardsAdminPanelProps) {
                 <button
                   type="button"
                   onClick={handleOpenNewTask}
-                  className="mb-4 flex w-full items-center justify-center gap-3 rounded-[24px] border-2 border-dashed border-white/15 bg-[#1C1622]/80 px-4 py-6 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-purple)]/40 hover:text-[var(--shop-purple)]"
+                  className="mb-4 flex w-full items-center justify-center gap-3 rounded-[24px] border-2 border-dashed border-white/15 bg-[var(--shop-panel-solid)]/80 px-4 py-6 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-purple)]/40 hover:text-[var(--shop-purple)]"
                 >
                   <svg viewBox="0 0 16 16" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
                     <path d="M8 2v12M2 8h12" />
@@ -1104,7 +1108,7 @@ function GiveawayFormComponent({
                         {task.title}
                       </p>
                       <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                        {task.rewardType === 'ticket' ? task.rewardValue : 'Coupon'}
+                        {TASK_TYPE_LABELS[task.taskType ?? 'custom'] ?? 'Custom'}
                       </p>
                     </div>
 
@@ -1190,6 +1194,25 @@ function GiveawayFormComponent({
             </select>
           </label>
         </div>
+
+        {/* ── Prizes for sale toggle ── */}
+        <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
+          <label className="flex cursor-pointer items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+              Prizes for Sale
+            </span>
+            <input
+              type="checkbox"
+              checked={form.prizesForSale}
+              onChange={(e) => onFormChange({ ...form, prizesForSale: e.target.checked })}
+              className="h-4 w-4 accent-[var(--shop-purple)]"
+            />
+          </label>
+          <p className="mt-1 text-[10px] leading-relaxed text-stone-500">
+            Allow the prize products to be bought in the store again (e.g. if the winner
+            declined after the draw). The storefront will treat them as normal items.
+          </p>
+        </div>
       </div>
 
       <div className="mt-5 flex gap-3">
@@ -1255,48 +1278,51 @@ function TaskFormComponent({
             placeholder="e.g. Invite 3 Friends"
           />
         </label>
-        <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">Task Type</span>
+          <select
+            value={form.taskType ?? 'custom'}
+            onChange={(e) => onFormChange({ ...form, taskType: e.target.value as TaskInput['taskType'] })}
+            className="w-full rounded-xl border border-white/10 bg-white/8 px-3 py-2.5 text-sm text-[var(--shop-cream)] outline-none"
+          >
+            <option value="custom">Custom (honor-system)</option>
+            <option value="join_channel">Join Channel (bot-verified)</option>
+            <option value="invite_friend">Invite Friends (bot-verified)</option>
+            <option value="like_product">Like Products (tracked)</option>
+          </select>
+        </label>
+        {(form.taskType === 'custom' || form.taskType === 'join_channel') && (
           <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">Reward Type</span>
-            <select
-              value={form.rewardType}
-              onChange={(e) => onFormChange({ ...form, rewardType: e.target.value as 'coupon' | 'ticket' })}
-              className="w-full rounded-xl border border-white/10 bg-white/8 px-3 py-2.5 text-sm text-[var(--shop-cream)] outline-none"
-            >
-              <option value="coupon">Coupon (10% OFF)</option>
-              <option value="ticket">Giveaway Ticket</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">Reward Value</span>
-            <input
-              value={form.rewardValue}
-              onChange={(e) => onFormChange({ ...form, rewardValue: e.target.value })}
-              className="w-full rounded-xl border border-white/10 bg-white/8 px-3 py-2.5 text-sm text-[var(--shop-cream)] outline-none"
-              placeholder="e.g. 10% OFF COUPON"
-            />
-          </label>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">Action URL (optional)</span>
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+              {form.taskType === 'join_channel' ? 'Channel' : 'Link (URL)'}
+            </span>
             <input
               value={form.actionUrl ?? ''}
               onChange={(e) => onFormChange({ ...form, actionUrl: e.target.value })}
               className="w-full rounded-xl border border-white/10 bg-white/8 px-3 py-2.5 text-sm text-[var(--shop-cream)] outline-none"
-              placeholder="e.g. https://instagram.com/..."
+              placeholder={form.taskType === 'join_channel' ? 'e.g. @my_channel' : 'e.g. https://instagram.com/...'}
             />
           </label>
+        )}
+        {(form.taskType === 'invite_friend' || form.taskType === 'like_product') && (
           <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">Button Label (optional)</span>
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+              Required {form.taskType === 'invite_friend' ? 'Referrals' : 'Likes'}
+            </span>
             <input
-              value={form.actionLabel ?? ''}
-              onChange={(e) => onFormChange({ ...form, actionLabel: e.target.value })}
+              type="number"
+              value={form.requiredCount ?? ''}
+              onChange={(e) => onFormChange({
+                ...form,
+                requiredCount: e.target.value === '' ? undefined : Math.max(1, Math.floor(Number(e.target.value) || 1)),
+              })}
               className="w-full rounded-xl border border-white/10 bg-white/8 px-3 py-2.5 text-sm text-[var(--shop-cream)] outline-none"
-              placeholder="e.g. Follow, Subscribe, Join"
+              min={1}
+              max={1000}
+              placeholder={form.taskType === 'invite_friend' ? 'e.g. 3 (empty = any referral)' : 'e.g. 5'}
             />
           </label>
-        </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <label className="flex cursor-pointer items-center gap-2">
             <input
@@ -1573,14 +1599,8 @@ function TaskCard({
           {task.title}
         </p>
         <div className="mt-1 flex items-center gap-2">
-          <span
-            className={`inline-block rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] ${
-              task.rewardType === 'coupon'
-                ? 'bg-amber-300/12 text-amber-100'
-                : 'bg-[var(--shop-purple)]/12 text-[var(--shop-purple)]'
-            }`}
-          >
-            {task.rewardValue}
+          <span className="rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+            {TASK_TYPE_LABELS[task.taskType ?? 'custom'] ?? 'Custom'}
           </span>
           <span
             className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] ${

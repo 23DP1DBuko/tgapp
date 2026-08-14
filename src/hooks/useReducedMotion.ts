@@ -1,20 +1,29 @@
 import { useSyncExternalStore } from 'react'
 
+import {
+  getReducedMotion,
+  REDUCED_MOTION_EVENT,
+} from '../lib/motionPrefs'
+
 /**
- * Subscribe to `prefers-reduced-motion: reduce` media query changes.
+ * Resolved `prefers-reduced-motion` state.
  * Returns `true` when the user prefers reduced motion.
  *
- * Uses `useSyncExternalStore` for tearing-free, concurrent-safe reads
- * that stay in sync with the latest OS accessibility setting.
+ * The value is the manual override from the Preferences page (localStorage)
+ * when set, otherwise the OS media query. Reactively updates on either change.
  */
 function subscribe(onStoreChange: () => void): () => void {
   const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
   mql.addEventListener('change', onStoreChange)
-  return () => mql.removeEventListener('change', onStoreChange)
+  window.addEventListener(REDUCED_MOTION_EVENT, onStoreChange)
+  return () => {
+    mql.removeEventListener('change', onStoreChange)
+    window.removeEventListener(REDUCED_MOTION_EVENT, onStoreChange)
+  }
 }
 
 function getSnapshot(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  return getReducedMotion()
 }
 
 function getServerSnapshot(): boolean {

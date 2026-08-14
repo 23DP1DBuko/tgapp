@@ -56,17 +56,6 @@ export const ORDER_STATUSES = [
   'cancelled',
 ] as const
 export const PROMO_DISCOUNT_TYPES = ['percentage', 'fixed_amount'] as const
-export const RESERVATION_DURATION_MS = (() => {
-  try {
-    const envValue = Number(process.env.RESERVATION_DURATION_MS)
-    if (Number.isFinite(envValue) && envValue >= 60_000 && envValue <= 3_600_000) {
-      return envValue
-    }
-  } catch {
-    // Use default
-  }
-  return 15 * 60 * 1000 // 15 minutes default
-})()
 export const PRODUCT_CATEGORIES = [
   'hoodies',
   'tshirts',
@@ -74,6 +63,7 @@ export const PRODUCT_CATEGORIES = [
   'accessories',
   'other',
 ] as const
+export const PRODUCT_DISCOUNT_TYPES = ['percentage', 'fixed'] as const
 
 if (getApps().length === 0) {
   initializeApp()
@@ -162,12 +152,6 @@ export function isPromoDiscountType(
   )
 }
 
-export function isValidPollInput(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') return false
-  const p = value as Partial<{ title?: unknown; options?: unknown; isActive?: unknown }>
-  return typeof p.title === 'string' && Array.isArray(p.options) && typeof p.isActive === 'boolean'
-}
-
 export function isValidPromoInput(value: unknown): value is PromoAdminInput {
   if (!value || typeof value !== 'object') {
     return false
@@ -196,6 +180,75 @@ export function isValidPromoInput(value: unknown): value is PromoAdminInput {
         Number.isInteger(promo.usageCount) &&
         promo.usageCount >= 0))
   )
+}
+
+export function isProductDiscountType(value: unknown): value is (typeof PRODUCT_DISCOUNT_TYPES)[number] {
+  return (
+    typeof value === 'string' &&
+    (PRODUCT_DISCOUNT_TYPES as readonly string[]).includes(value)
+  )
+}
+
+/**
+ * Compute the effective (discounted) price a buyer pays.
+ *
+ * Mirrors `getProductEffectivePrice` in src/lib/productPrice.ts — checkout
+ * validates the client-submitted item prices against this exact math, so a
+ * tampered price can never get through.
+ *
+ * - `percentage` → price reduced by N% (clamped at 0, never negative)
+ * - `fixed`     → price reduced by N EUR (clamped at 0, never negative)
+ * - anything else → the base price, unchanged
+ */
+export function applyProductDiscount(
+  price: number,
+  discountType: unknown,
+  discountValue: unknown,
+): number {
+  if (discountType === 'percentage' && typeof discountValue === 'number' && discountValue > 0) {
+    return Math.max(0, Math.round(price * (100 - Math.min(discountValue, 100))) / 100)
+  }
+  if (discountType === 'fixed' && typeof discountValue === 'number' && discountValue > 0) {
+    return Math.max(0, Math.round((price - discountValue) * 100) / 100)
+  }
+  return price
+}
+
+/**
+ * Validate the discount payload of the setProductDiscount admin endpoint.
+ * `discountType: null` clears the discount. A fixed discount's value is checked
+ * against the actual product price inside the endpoint (must be < price).
+ */
+export function isValidProductDiscountInput(
+  value: unknown,
+): value is { discountType: (typeof PRODUCT_DISCOUNT_TYPES)[number] | null; discountValue: number | null } {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const discount = value as { discountType?: unknown; discountValue?: unknown }
+
+  if (discount.discountType === null) {
+    return discount.discountValue === null || discount.discountValue === undefined
+  }
+
+  if (!isProductDiscountType(discount.discountType)) {
+    return false
+  }
+
+  if (
+    typeof discount.discountValue !== 'number' ||
+    !Number.isFinite(discount.discountValue) ||
+    discount.discountValue <= 0
+  ) {
+    return false
+  }
+
+  if (discount.discountType === 'percentage' && discount.discountValue > 100) {
+    return false
+  }
+
+  return true
 }
 
 export function isValidProductInput(value: unknown): value is ProductAdminInput {
@@ -229,7 +282,18 @@ export function isValidProductInput(value: unknown): value is ProductAdminInput 
       (typeof product.isLimitedLabel === 'string' && product.isLimitedLabel.length <= 80)) &&
     (product.upcoming === undefined || typeof product.upcoming === 'boolean') &&
     (product.earlyAccessAt === undefined || product.earlyAccessAt === null || typeof product.earlyAccessAt === 'string') &&
-    (product.publicAt === undefined || product.publicAt === null || typeof product.publicAt === 'string')
+    (product.publicAt === undefined || product.publicAt === null || typeof product.publicAt === 'string') &&
+    (product.discountType === undefined ||
+      product.discountType === null ||
+      isProductDiscountType(product.discountType)) &&
+    (product.discountValue === undefined ||
+      product.discountValue === null ||
+      (typeof product.discountValue === 'number' &&
+        Number.isFinite(product.discountValue) &&
+        product.discountValue >= 0 &&
+        product.discountValue <= 100000 &&
+        // A percentage discount can never exceed 100%.
+        (product.discountType !== 'percentage' || product.discountValue <= 100)))
   )
 }
 
@@ -279,6 +343,15 @@ export function isValidAppliedPromo(value: unknown): value is CheckoutAppliedPro
   )
 }
 
+/**
+ * Idempotency key for checkout submissions (M4). Used as the deterministic
+ * order document ID, so a retry / double-tap maps to the same document and can
+ * never create a duplicate order. UUID v4 (36 chars, hex + dashes) passes.
+ */
+export function isValidClientOrderId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(value)
+}
+
 export function isValidCheckoutOrderPayload(value: unknown): value is CreateCheckoutOrderRequest {
   if (!value || typeof value !== 'object') {
     return false
@@ -289,12 +362,17 @@ export function isValidCheckoutOrderPayload(value: unknown): value is CreateChec
   return (
     typeof order.initData === 'string' &&
     order.initData.trim().length > 0 &&
+    isValidClientOrderId(order.clientOrderId) &&
     typeof order.fullName === 'string' &&
     order.fullName.trim().length > 0 &&
     order.fullName.length <= 120 &&
     typeof order.telegramHandle === 'string' &&
     order.telegramHandle.trim().length > 0 &&
     order.telegramHandle.length <= 80 &&
+    // `status` and `telegramUserId` are validated for shape but ignored at order
+    // creation — createCheckoutOrder derives both server-side (initial status
+    // from paymentMethod; owner from the HMAC-verified user). Keep for client
+    // compatibility; safe to remove from the API in a future cleanup.
     (order.telegramUserId === undefined ||
       order.telegramUserId === null ||
       Number.isInteger(order.telegramUserId)) &&
@@ -376,10 +454,11 @@ export function isValidTaskInput(value: unknown): value is TaskAdminInput {
   const t = value as Partial<TaskAdminInput>
   return (
     typeof t.title === 'string' && t.title.trim().length > 0 && t.title.trim().length <= 120 &&
-    (t.rewardType === 'coupon' || t.rewardType === 'ticket') &&
-    typeof t.rewardValue === 'string' && t.rewardValue.trim().length > 0 && t.rewardValue.trim().length <= 60 &&
     (t.status === 'active' || t.status === 'inactive') &&
-    typeof t.sortOrder === 'number' && Number.isFinite(t.sortOrder) && t.sortOrder >= 0
+    typeof t.sortOrder === 'number' && Number.isFinite(t.sortOrder) && t.sortOrder >= 0 &&
+    (t.actionUrl === undefined || (typeof t.actionUrl === 'string' && t.actionUrl.length <= 500)) &&
+    (t.taskType === undefined || ['custom', 'join_channel', 'invite_friend', 'like_product'].includes(t.taskType)) &&
+    (t.requiredCount === undefined || (Number.isInteger(t.requiredCount) && t.requiredCount >= 1 && t.requiredCount <= 1000))
   )
 }
 
@@ -395,7 +474,8 @@ export function isValidGiveawayInput(value: unknown): value is GiveawayAdminInpu
     
     (g.startAt === null || typeof g.startAt === 'string') &&
     typeof g.endAt === 'string' && g.endAt.length > 0 &&
-    Array.isArray(g.prizes) && g.prizes.length >= 1 && (g.accessLevel === 'public' || g.accessLevel === 'early_access_only') && Array.isArray(g.entryTasks) && typeof g.baseEntryTickets === 'number' && Number.isInteger(g.baseEntryTickets) && g.baseEntryTickets >= 0 && g.baseEntryTickets <= 1000
+    Array.isArray(g.prizes) && g.prizes.length >= 1 && (g.accessLevel === 'public' || g.accessLevel === 'early_access_only') && Array.isArray(g.entryTasks) && typeof g.baseEntryTickets === 'number' && Number.isInteger(g.baseEntryTickets) && g.baseEntryTickets >= 0 && g.baseEntryTickets <= 1000 &&
+    (g.prizesForSale === undefined || typeof g.prizesForSale === 'boolean')
   )
 }
 
@@ -412,14 +492,28 @@ export function isValidGiveawayPrize(value: unknown): value is Record<string, un
 export function isValidEntryTaskInput(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object") return false
   const t = value as Record<string, unknown>
-  return typeof t.type === "string" && ["join_channel", "invite_friend", "like_product", "custom"].includes(t.type) && typeof t.label === "string" && t.label.trim().length > 0 && t.label.length <= 200 && typeof t.ticketsGranted === "number" && Number.isInteger(t.ticketsGranted) && t.ticketsGranted >= 1 && t.ticketsGranted <= 100 && typeof t.verifyMethod === "string" && ["telegram_api", "referral_count", "manual"].includes(t.verifyMethod) && (t.metadata === undefined || t.metadata === null || (typeof t.metadata === "string" && (t.metadata as string).length <= 200))
+  return typeof t.type === "string" && ["join_channel", "invite_friend", "like_product", "custom"].includes(t.type) && typeof t.label === "string" && t.label.trim().length > 0 && t.label.length <= 200 && typeof t.ticketsGranted === "number" && Number.isInteger(t.ticketsGranted) && t.ticketsGranted >= 1 && t.ticketsGranted <= 100 && typeof t.verifyMethod === "string" && ["telegram_api", "referral_count", "client_claim", "manual"].includes(t.verifyMethod) && (t.metadata === undefined || t.metadata === null || (typeof t.metadata === "string" && (t.metadata as string).length <= 200))
 }
 
+/** Uniform random pick from a charset via CSPRNG (L2 — no Math.random). */
+function randomCodeFromCharset(charset: string, length: number): string {
+  let result = ""
+  for (let i = 0; i < length; i++) {
+    result += charset.charAt(crypto.randomInt(charset.length))
+  }
+  return result
+}
+
+/** 8-char lowercase-alphanumeric id (e.g. giveaway entry-task ids). */
 export function generateShortId() {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-  let result = ""
-  for (let i = 0; i < 8; i++) result += chars.charAt(Math.floor(Math.random() * chars.length))
-  return result
+  return randomCodeFromCharset(chars, 8)
+}
+
+/** 4-char uppercase-alphanumeric suffix for generated promo codes. */
+export function generateRandomSuffix(length = 4): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  return randomCodeFromCharset(chars, length)
 }
 
 export function isValidUploadImagePayload(
@@ -667,6 +761,40 @@ export async function sendTelegramOrderReadyForMeetupMessage(
   }
 }
 
+export type OrderCreatedMessageInput = {
+  orderId: string
+  itemsSummary: string
+  total: number
+  fulfillmentLabel: string
+  statusLabel: string
+  miniAppUrl: string | null
+}
+
+/**
+ * Builds the order-confirmed Telegram message text. Extracted as a pure
+ * function so the formatting (real newlines, not the literal "\n" sequence)
+ * is covered by unit tests (M1).
+ */
+export function buildOrderCreatedMessageText(input: OrderCreatedMessageInput): string {
+  const lines = [
+    '✅ Order Confirmed',
+    '',
+    `Order: ${input.orderId}`,
+    `Items: ${input.itemsSummary}`,
+    `Total: ${input.total} EUR`,
+    `Fulfillment: ${input.fulfillmentLabel}`,
+    `Status: ${input.statusLabel}`,
+  ]
+
+  if (input.miniAppUrl) {
+    lines.push('', `Track it: ${input.miniAppUrl}`)
+  }
+
+  lines.push('', 'We will message you here when the status changes.')
+
+  return lines.join('\n')
+}
+
 export async function sendTelegramOrderCreatedMessage(
   botToken: string,
   miniAppUrl: string | null,
@@ -682,21 +810,14 @@ export async function sendTelegramOrderCreatedMessage(
   const fulfillmentLabel =
     fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup'
 
-  const lines = [
-    '✅ Order Confirmed',
-    '',
-    `Order: ${orderId}`,
-    `Items: ${itemsSummary}`,
-    `Total: ${total} EUR`,
-    `Fulfillment: ${fulfillmentLabel}`,
-    `Status: ${statusLabel}`,
-  ]
-
-  if (miniAppUrl) {
-    lines.push('', `Track it: ${miniAppUrl}`)
-  }
-
-  lines.push('', 'We will message you here when the status changes.')
+  const text = buildOrderCreatedMessageText({
+    orderId,
+    itemsSummary,
+    total,
+    fulfillmentLabel,
+    statusLabel,
+    miniAppUrl,
+  })
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
@@ -705,7 +826,7 @@ export async function sendTelegramOrderCreatedMessage(
     },
     body: JSON.stringify({
       chat_id: telegramUserId,
-      text: lines.join('\\n'),
+      text,
     }),
   })
 
@@ -731,6 +852,80 @@ export function isHelpCommand(messageText: string) {
   const normalizedText = messageText.toLowerCase()
 
   return normalizedText === '/help'
+}
+
+// ── Reward-code bot messages (L5) ──
+// Milestone promo codes (check-in / referral) are delivered by bot DM too, so
+// the user has a persistent copy. Sending is fail-open at every call site.
+
+export function buildRewardMessageText(input: {
+  headline: string
+  label: string
+  code: string
+}): string {
+  const lines = [
+    input.headline,
+    '',
+    `You unlocked a ${input.label} promo code:`,
+    `Code: ${input.code}`,
+    '',
+    'Single use · Valid for 30 days · Enter it at checkout.',
+  ]
+  return lines.join('\n')
+}
+
+export async function sendTelegramRewardMessage(
+  botToken: string,
+  telegramUserId: number,
+  input: { headline: string; label: string; code: string },
+): Promise<void> {
+  const text = buildRewardMessageText(input)
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      chat_id: telegramUserId,
+      text,
+    }),
+  })
+
+  if (!response.ok) {
+    const bodyText = await response.text()
+    throw new Error(`Telegram sendMessage failed: ${response.status} ${bodyText}`)
+  }
+}
+
+/**
+ * Which referral milestones already have a code on disk. Used to DM only
+ * NEWLY granted codes (L5): the Rewards screen calls getReferralInfo on every
+ * visit, and re-visiting must never re-send a code.
+ */
+export async function readGrantedRewardThresholds(
+  db: FirebaseFirestore.Firestore,
+  telegramUserId: number,
+): Promise<Set<number>> {
+  const rewardsSnapshot = await db
+    .collection('referralRewards')
+    .doc(String(telegramUserId))
+    .get()
+
+  const granted = new Set<number>()
+  if (!rewardsSnapshot.exists) return granted
+
+  const grants = rewardsSnapshot.data() as Record<string, unknown> | undefined
+  if (!grants) return granted
+
+  for (const [key, value] of Object.entries(grants)) {
+    const threshold = Number(key)
+    const promoCode = (value as { promoCode?: unknown } | undefined)?.promoCode
+    if (Number.isInteger(threshold) && typeof promoCode === 'string' && promoCode.length > 0) {
+      granted.add(threshold)
+    }
+  }
+  return granted
 }
 
 export async function sendTelegramStoreWelcomeMessage(
@@ -912,8 +1107,15 @@ export async function upsertTelegramSubscriberFromUpdate(
         lastSeenAt: now,
       }
 
-      // Only store referredBy on first visit, never overwrite
-      if (referralCode) {
+      // Only store referredBy on first visit, never overwrite. The write choke
+      // point enforces the full invariant: only well-formed ref_<id> codes, and
+      // never a user's own code (self-referral, H4), so a self-referral can
+      // never count toward their own milestones or early-access threshold.
+      if (
+        referralCode &&
+        extractReferralUserId(referralCode) !== null &&
+        !isSelfReferralCode(referralCode, telegramUserId)
+      ) {
         subscriberData.referredBy = referralCode
       }
 
@@ -940,12 +1142,64 @@ export function parseReferralCode(messageText: string): string | null {
 
   const potentialCode = parts[1].trim()
 
-  // Only accept codes starting with ref_ to avoid matching arbitrary args
-  if (potentialCode.startsWith('ref_') && potentialCode.length > 4 && potentialCode.length <= 80) {
-    return potentialCode
+  // Only accept well-formed numeric referral codes (ref_<id>) — a garbage code
+  // would otherwise be stored and counted as a bogus "referral".
+  return extractReferralUserId(potentialCode) !== null ? potentialCode : null
+}
+
+/** Parses the user id out of a referral code like `ref_123456789`, or null. */
+export function extractReferralUserId(code: string): number | null {
+  if (!/^ref_\d{1,15}$/.test(code)) return null
+  return Number(code.slice(4))
+}
+
+/** True when a referral code points back at the same Telegram user (H4). */
+export function isSelfReferralCode(
+  referralCode: string | null | undefined,
+  telegramUserId: number,
+): boolean {
+  if (!referralCode) return false
+  const referrerId = extractReferralUserId(referralCode)
+  return referrerId !== null && referrerId === telegramUserId
+}
+
+/** True when a subscriber document is a self-referral (subscriber === referrer). */
+export function isSelfReferralSubscriberDoc(data: {
+  telegramUserId?: unknown
+  referredBy?: unknown
+}): boolean {
+  const subscriberUserId = typeof data.telegramUserId === 'number' ? data.telegramUserId : null
+  const code = typeof data.referredBy === 'string' ? data.referredBy : ''
+  const referrerId = extractReferralUserId(code)
+
+  return subscriberUserId !== null && referrerId !== null && subscriberUserId === referrerId
+}
+
+/**
+ * Counts referral documents for a referrer's code, excluding self-referrals
+ * (subscriber === referrer). Defense-in-depth (H4): even if a self-referral
+ * document exists, it never counts toward milestones or early access.
+ */
+export async function countReferralsExcludingSelf(
+  db: FirebaseFirestore.Firestore,
+  referralCode: string,
+): Promise<number> {
+  const snapshot = await db
+    .collection('telegramSubscribers')
+    .where('referredBy', '==', referralCode)
+    .get()
+
+  let count = 0
+  for (const doc of snapshot.docs) {
+    const data = doc.data()
+    // Every doc here matches referredBy === referralCode, so the shared
+    // self-referral predicate (subscriber === referrer) is the single source
+    // of truth — the two checks cannot drift.
+    if (isSelfReferralSubscriberDoc(data)) continue
+    count += 1
   }
 
-  return null
+  return count
 }
 
 export const uploadBannerImageAdmin = onRequest(
@@ -1274,13 +1528,20 @@ export const getAdminAnalytics = onRequest(
         }
       }
 
-      // Count referrals (subscribers with a non-empty referredBy field)
+      // Count referrals (subscribers with a valid referredBy code), excluding
+      // self-referrals (H4) so the metric can't be inflated by own-link taps.
       const referredSnapshot = await db
         .collection('telegramSubscribers')
         .where('referredBy', '>=', '')
-        .count()
         .get()
-      const referralCount = referredSnapshot.data().count
+      let referralCount = 0
+      for (const doc of referredSnapshot.docs) {
+        const data = doc.data()
+        const code = typeof data.referredBy === 'string' ? data.referredBy : ''
+        if (extractReferralUserId(code) === null) continue
+        if (isSelfReferralSubscriberDoc(data)) continue
+        referralCount += 1
+      }
 
       response.status(200).json({
         ok: true,
@@ -1303,78 +1564,124 @@ export const getAdminAnalytics = onRequest(
     }
   },
 )
-export async function notifyProductSubscribers(productId: string) {
-  const db = getFirestore()
-  const botToken = telegramBotToken.value()
+// ── Referral reward milestones ──
+// Grant one-time promo codes as the user's referral count grows.
+// Mirrors the check-in milestone ladder (5/10/15/25% OFF).
 
-  if (!botToken) return
+const REFERRAL_MILESTONES: RewardTier[] = [
+  { threshold: 3, discountPercent: 5, codeSuffix: '05', label: '5% OFF' },
+  { threshold: 5, discountPercent: 10, codeSuffix: '10', label: '10% OFF' },
+  { threshold: 10, discountPercent: 15, codeSuffix: '15', label: '15% OFF' },
+  { threshold: 15, discountPercent: 25, codeSuffix: '25', label: '25% OFF' },
+]
 
-  const productSnapshot = await db.collection('products').doc(productId).get()
-  if (!productSnapshot.exists) return
-
-  const productData = productSnapshot.data() as { name?: string } | undefined
-  const productName = productData?.name ?? 'A product'
-
-  const subscriptionsSnapshot = await db
-    .collection('productNotifySubscriptions')
-    .where('productId', '==', productId)
-    .where('notifiedAt', '==', null)
-    .get()
-
-  if (subscriptionsSnapshot.empty) return
-
-  const miniAppUrl = telegramMiniAppUrl.value()
-  const text = [
-    `📢 ${productName} is now available!`,
-    '',
-    'The piece you were waiting for is ready. Open the store to grab it before it sells out.',
-    miniAppUrl ? `👉 Open the store: ${miniAppUrl}` : '',
-  ].filter(Boolean).join('\n')
-
-  let sentCount = 0
-  let failedCount = 0
-
-  const batch = db.batch()
-
-  for (const doc of subscriptionsSnapshot.docs) {
-    const subscriptionData = doc.data() as { telegramUserId?: number }
-    const telegramUserId = subscriptionData.telegramUserId
-
-    if (!telegramUserId) {
-      failedCount += 1
-      continue
-    }
-
-    try {
-      await sendTelegramBroadcastMessage(botToken, telegramUserId, text)
-      sentCount += 1
-      batch.update(doc.ref, { notifiedAt: new Date().toISOString() })
-    } catch {
-      failedCount += 1
-    }
-  }
-
-  try {
-    await batch.commit()
-  } catch {
-    console.error('Failed to mark subscribers as notified', productId)
-  }
-
-  console.log(`Notified ${sentCount} subscribers for product ${productId} (${failedCount} failed)`)
+export function generateReferralPromoCode(telegramUserId: number, tier: RewardTier): string {
+  const randomSuffix = generateRandomSuffix(4)
+  return `REF${tier.codeSuffix}_${telegramUserId.toString().slice(-4)}_${randomSuffix}`
 }
-
-
-
 
 export async function processAndCheckRewards(
-  _db: FirebaseFirestore.Firestore,
-  _telegramUserId: number,
-  _referralCount: number,
+  db: FirebaseFirestore.Firestore,
+  telegramUserId: number,
+  referralCount: number,
 ): Promise<RewardMilestone[]> {
-  return []
+  const rewardsDocRef = db.collection('referralRewards').doc(String(telegramUserId))
+
+  try {
+    // Grant any newly reached tiers inside one transaction so a code can never
+    // be issued twice (getReferralInfo runs on every Rewards visit).
+    await db.runTransaction(async (transaction) => {
+      const rewardsSnapshot = await transaction.get(rewardsDocRef)
+      const existingGrants = rewardsSnapshot.exists
+        ? (rewardsSnapshot.data() as Record<string, unknown>)
+        : {}
+
+      const now = new Date()
+      const grantedAt = now.toISOString()
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) // 30 days
+
+      for (const tier of REFERRAL_MILESTONES) {
+        const thresholdKey = String(tier.threshold)
+
+        if (referralCount < tier.threshold) break
+        const existingGrant = existingGrants[thresholdKey] as
+          | { promoCode?: unknown; promoCodeId?: unknown }
+          | undefined
+        if (
+          existingGrant &&
+          typeof existingGrant.promoCode === 'string' &&
+          existingGrant.promoCode.length > 0
+        ) {
+          continue
+        }
+
+        const promoCode = generateReferralPromoCode(telegramUserId, tier)
+        const promoCodeRef = db.collection('promoCodes').doc()
+
+        // Write the promo code (same shape checkout validates against)
+        transaction.set(promoCodeRef, {
+          code: promoCode,
+          discountType: 'percentage',
+          discountValue: tier.discountPercent,
+          isActive: true,
+          expiresAt: new Date(expiresAt.getTime()),
+          usageLimit: 1,
+          usageCount: 0,
+          createdAt: now.toISOString(),
+        })
+
+        // Persist the grant so it is never granted twice
+        transaction.set(
+          rewardsDocRef,
+          {
+            [thresholdKey]: {
+              promoCode,
+              promoCodeId: promoCodeRef.id,
+              grantedAt,
+            },
+          },
+          { merge: true },
+        )
+      }
+    })
+  } catch (error) {
+    console.error('processAndCheckRewards failed', error)
+    // Don't fail the whole request — fall through and return current grants.
+  }
+
+  // Read back the grants to build the milestone response (granted + locked tiers)
+  let grants: Record<string, { promoCode?: unknown; promoCodeId?: unknown }> = {}
+  try {
+    const rewardsSnapshot = await rewardsDocRef.get()
+    if (rewardsSnapshot.exists) {
+      grants = rewardsSnapshot.data() as typeof grants
+    }
+  } catch (error) {
+    console.error('processAndCheckRewards read-back failed', error)
+  }
+
+  return REFERRAL_MILESTONES.map((tier) => {
+    const grant = grants[String(tier.threshold)]
+    const promoCode =
+      grant && typeof grant.promoCode === 'string' && grant.promoCode.length > 0
+        ? grant.promoCode
+        : ''
+    const promoCodeId =
+      grant && typeof grant.promoCodeId === 'string' && grant.promoCodeId.length > 0
+        ? grant.promoCodeId
+        : ''
+
+    return {
+      threshold: tier.threshold,
+      discountPercent: tier.discountPercent,
+      promoCode,
+      promoCodeId,
+      granted: promoCode.length > 0,
+    }
+  })
 }
 
-type RewardMilestone = {
+export type RewardMilestone = {
   threshold: number
   discountPercent: number
   promoCode: string

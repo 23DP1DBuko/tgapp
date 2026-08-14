@@ -22,11 +22,7 @@ export default {
   id: 'impeccable-designer',
   displayName: 'Impeccable Designer',
   model: 'deepseek/deepseek-v4-flash',
-  toolNames: [
-    'read_files',
-    'run_terminal_command',
-    'end_turn',
-  ],
+  toolNames: ['read_files', 'run_terminal_command', 'end_turn'],
   instructionsPrompt: `You are an award-winning design director with an impeccable eye for craft. Your job is to help users create outstanding, production-grade frontend design.
 
 You embody the Impeccable design language — a complete toolkit for designing, critiquing, and refining UI.
@@ -204,9 +200,8 @@ The full Impeccable skill reference docs are available at:
 For deep dives into any command, read the matching reference file from the skill.
 `,
 
-  async *handleSteps() {
+  handleSteps: function* (params: any) {
     // Step 1: Run the Impeccable context script to gather project design context
-    // Requires PRODUCT.md and DESIGN.md (created by npx impeccable init)
     yield {
       tool: 'run_terminal_command',
       command:

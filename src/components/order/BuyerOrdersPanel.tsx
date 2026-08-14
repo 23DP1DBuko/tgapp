@@ -5,12 +5,13 @@ import { PageHeader } from '../ui/PageHeader'
 import { listOrdersByTelegramUserId } from '../../lib/firebase/orders'
 import {
   doesOrderMatchBuyerFilter,
-  formatOrderStatus,
+  getOrderStatusTranslationKey,
   type BuyerOrderFilter,
   groupBuyerOrdersByRecency,
   getBuyerOrderProgressSteps,
   getOrderStatusBadgeClassName,
 } from '../../lib/orderStatus'
+import { useI18n } from '../../lib/i18n'
 import type { Order } from '../../types/order'
 
 type BuyerOrdersPanelProps = {
@@ -21,6 +22,7 @@ type BuyerOrdersPanelProps = {
 }
 
 export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModalChange }: BuyerOrdersPanelProps) {
+  const { t } = useI18n()
   const [orders, setOrders] = useState<Order[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -50,7 +52,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
       } catch (error) {
         if (!isCancelled) {
           setErrorMessage(
-            error instanceof Error ? error.message : 'Failed to load your orders.',
+            error instanceof Error ? error.message : t('orders.failed'),
           )
         }
       } finally {
@@ -65,7 +67,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
     return () => {
       isCancelled = true
     }
-  }, [initData, telegramUserId])
+  }, [initData, telegramUserId, t])
 
   async function handleRefresh() {
     setIsLoading(true)
@@ -76,7 +78,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
       setOrders(nextOrders)
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : 'Failed to load your orders.',
+        error instanceof Error ? error.message : t('orders.failed'),
       )
     } finally {
       setIsLoading(false)
@@ -88,8 +90,8 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
     [orders, selectedFilter],
   )
   const groupedOrders = useMemo(
-    () => groupBuyerOrdersByRecency(filteredOrders),
-    [filteredOrders],
+    () => groupBuyerOrdersByRecency(filteredOrders, t),
+    [filteredOrders, t],
   )
 
   return (
@@ -98,14 +100,14 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
       <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
         <div className="flex items-start justify-between gap-4">
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            My Orders
+            {t('orders.title')}
           </p>
           <button
             type="button"
             onClick={() => void handleRefresh()}
             className="rounded-full bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
           >
-            Refresh
+            {t('orders.refresh')}
           </button>
         </div>
 
@@ -117,10 +119,10 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
             >
               {(
                 [
-                  ['all', `All ${orders.length}`],
-                  ['active', 'Active'],
-                  ['completed', 'Completed'],
-                  ['cancelled', 'Cancelled'],
+                  ['all', t('orders.filterAll', { n: orders.length })],
+                  ['active', t('orders.filterActive')],
+                  ['completed', t('orders.filterCompleted')],
+                  ['cancelled', t('orders.filterCancelled')],
                 ] as const
               ).map(([filter, label]) => (
                 <button
@@ -158,13 +160,13 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
 
           {!isLoading && !errorMessage && orders.length === 0 ? (
             <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-              No orders yet. Once you send a request in Telegram, it will show up here.
+              {t('orders.empty')}
             </p>
           ) : null}
 
           {!isLoading && !errorMessage && orders.length > 0 && filteredOrders.length === 0 ? (
             <p className="rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-              No orders match this filter right now.
+              {t('orders.noMatch')}
             </p>
           ) : null}
 
@@ -179,7 +181,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
                   </div>
 
                   {group.orders.map((order) => {
-                    const progressSteps = getBuyerOrderProgressSteps(order)
+                    const progressSteps = getBuyerOrderProgressSteps(order, t)
                     return (
                       <button
                         key={order.id}
@@ -204,7 +206,7 @@ export function BuyerOrdersPanel({ initData, telegramUserId, onBack, onOrderModa
                             <span
                               className={`rounded-full px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] ${getOrderStatusBadgeClassName(order.status)}`}
                             >
-                              {formatOrderStatus(order.status)}
+                              {t(getOrderStatusTranslationKey(order.status))}
                             </span>
                           </div>
                         </div>

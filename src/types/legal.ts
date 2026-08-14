@@ -35,3 +35,18 @@ export type UserSettingsResponse = {
   reason?: string
   detail?: string
 }
+
+// ── Localized legal documents ──
+
+/** Inline text supports **bold** and [label](url) markers (see LegalDocBody). */
+export type LegalBlock =
+  | { kind: 'p'; text: string }
+  | { kind: 'list'; items: string[] }
+  | { kind: 'titled'; title: string; text: string }
+
+export type LegalSection = {
+  heading: string
+  blocks: LegalBlock[]
+}
+
+export type LegalDocId = 'privacy' | 'terms'

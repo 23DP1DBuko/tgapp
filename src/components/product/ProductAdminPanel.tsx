@@ -15,7 +15,10 @@ import {
   deleteProductImages,
   uploadProductImages,
 } from '../../lib/firebase/storage'
-import { classifyAdminError, formatAdminErrorMessage, type AdminErrorKind } from '../../lib/retry'
+import { EARLY_ACCESS_REFERRAL_THRESHOLD } from '../../lib/earlyAccess'
+import { classifyAdminError, formatAdminErrorMessage } from '../../lib/retry'
+import { triggerHapticFeedback } from '../../lib/telegram/webApp'
+import { AdminFeedbackBanner } from '../ui/AdminFeedbackBanner'
 import { CustomSelect } from '../ui/CustomSelect'
 import { Input } from '../ui/Input'
 
@@ -24,6 +27,8 @@ type ProductAdminPanelProps = {
   products: Product[]
   onProductsChanged: () => void
 }
+
+type ViewMode = 'list' | 'form'
 
 type ProductFormState = {
   name: string
@@ -64,16 +69,129 @@ const initialFormState: ProductFormState = {
   publicAt: '',
 }
 
+// ─── Product form drafts (localStorage) ─────────────────────────────────
+// The product form is large; drafts keyed by selection ('new' or a product
+// id) preserve interrupted edits across tab switches and refreshes. Only
+// serializable fields are stored — pending File uploads cannot survive.
+
+type ProductFormDraft = {
+  form: ProductFormState
+  existingImageUrls: string[]
+  removedExistingImageUrls: string[]
+}
+
+const PRODUCT_DRAFT_PREFIX = 'yungwear:productAdminDraft:'
+const PRODUCT_LAST_SELECTION_KEY = 'yungwear:productAdminLastSelection'
+
+function productDraftKey(productId: string): string {
+  return `${PRODUCT_DRAFT_PREFIX}${productId}`
+}
+
+function readProductFormDraft(productId: string): ProductFormDraft | null {
+  try {
+    const raw = localStorage.getItem(productDraftKey(productId))
+
+    if (!raw) {
+      return null
+    }
+
+    const parsed: unknown = JSON.parse(raw)
+
+    if (!parsed || typeof parsed !== 'object') {
+      return null
+    }
+
+    const candidate = parsed as Record<string, unknown>
+    const formCandidate = candidate.form
+
+    if (!formCandidate || typeof formCandidate !== 'object') {
+      return null
+    }
+
+    const formRecord = formCandidate as Record<string, unknown>
+    const form: ProductFormState = { ...initialFormState }
+
+    // Whitelisted string fields only
+    for (const key of [
+      'name',
+      'description',
+      'brandNames',
+      'price',
+      'isLimitedLabel',
+      'earlyAccessAt',
+      'publicAt',
+    ] as const) {
+      if (typeof formRecord[key] === 'string') {
+        form[key] = formRecord[key] as string
+      }
+    }
+
+    if (
+      typeof formRecord.category === 'string'
+      && (PRODUCT_CATEGORIES as readonly string[]).includes(formRecord.category)
+    ) {
+      form.category = formRecord.category as ProductCategory
+    }
+
+    if (typeof formRecord.isAvailable === 'boolean') {
+      form.isAvailable = formRecord.isAvailable
+    }
+
+    if (typeof formRecord.upcoming === 'boolean') {
+      form.upcoming = formRecord.upcoming
+    }
+
+    const onlyStrings = (values: unknown): string[] =>
+      Array.isArray(values)
+        ? values.filter((value): value is string => typeof value === 'string')
+        : []
+
+    return {
+      form,
+      existingImageUrls: onlyStrings(candidate.existingImageUrls),
+      removedExistingImageUrls: onlyStrings(candidate.removedExistingImageUrls),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeProductFormDraft(productId: string, draft: ProductFormDraft): void {
+  try {
+    localStorage.setItem(productDraftKey(productId), JSON.stringify(draft))
+  } catch {
+    // Storage unavailable (private mode / quota) — drafts are best-effort.
+  }
+}
+
+function clearProductFormDraft(productId: string): void {
+  try {
+    localStorage.removeItem(productDraftKey(productId))
+  } catch {
+    // Ignore
+  }
+}
+
+function writeLastProductSelection(productId: string): void {
+  try {
+    localStorage.setItem(PRODUCT_LAST_SELECTION_KEY, productId)
+  } catch {
+    // Ignore
+  }
+}
+
 export function ProductAdminPanel({
   initData,
   products,
   onProductsChanged,
 }: ProductAdminPanelProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [form, setForm] = useState<ProductFormState>(initialFormState)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
   const [feedbackTone, setFeedbackTone] = useState<'success' | 'error'>('success')
-  const [feedbackErrorKind, setFeedbackErrorKind] = useState<AdminErrorKind | null>(null)
+  const [feedbackRetryable, setFeedbackRetryable] = useState(false)
   const [showSlowSaveHint, setShowSlowSaveHint] = useState(false)
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([])
   const [removedExistingImageUrls, setRemovedExistingImageUrls] = useState<string[]>([])
@@ -83,6 +201,12 @@ export function ProductAdminPanel({
     null,
   )
   const dragPointerIdRef = useRef<number | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  const productsRef = useRef(products)
+  productsRef.current = products
+  // Track the auto-dismiss timer so newer feedback cancels older pending
+  // dismissals (otherwise an old timer could hide a retryable error early).
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Slow-save hint: if the form has been submitting for >15s, show a "still working" message.
   useEffect(() => {
@@ -118,6 +242,59 @@ export function ProductAdminPanel({
     }
   }, [galleryItems])
 
+  // Auto-save a whitelisted draft of the current form whenever it changes.
+  // Pending local uploads (File objects) can't be serialized — only saved
+  // image URLs survive a restore. Pristine (untouched) forms are skipped so
+  // an empty draft is never written over a restored one or left behind after
+  // a successful create.
+  useEffect(() => {
+    const isPristine =
+      galleryItems.length === 0
+      && removedExistingImageUrls.length === 0
+      && (Object.keys(initialFormState) as (keyof ProductFormState)[]).every(
+        (key) => form[key] === initialFormState[key],
+      )
+
+    if (isPristine) {
+      return
+    }
+
+    const existingImageUrls = galleryItems
+      .filter(
+        (item): item is Extract<GalleryItem, { kind: 'existing' }> =>
+          item.kind === 'existing',
+      )
+      .map((item) => item.imageUrl)
+
+    writeProductFormDraft(selectedProductId, {
+      form,
+      existingImageUrls,
+      removedExistingImageUrls,
+    })
+  }, [form, galleryItems, removedExistingImageUrls, selectedProductId])
+
+  // Track the dismiss timer for non-retryable feedback (matches the other
+  // admin panels so success/validation messages don't linger).
+  const showFeedback = (
+    tone: 'success' | 'error',
+    message: string,
+    retryable = false,
+  ) => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current)
+      dismissTimerRef.current = null
+    }
+    setFeedbackTone(tone)
+    setFeedbackMessage(message)
+    setFeedbackRetryable(retryable)
+    if (!retryable) {
+      dismissTimerRef.current = setTimeout(() => {
+        dismissTimerRef.current = null
+        setFeedbackMessage(null)
+      }, 3000)
+    }
+  }
+
   function resetToCreateMode() {
     setSelectedProductId('new')
     setForm(initialFormState)
@@ -125,6 +302,19 @@ export function ProductAdminPanel({
     setGalleryItems((currentItems) => {
       cleanupPendingPreviewUrls(currentItems)
       return []
+    })
+  }
+
+  function applyDraftToForm(draft: ProductFormDraft) {
+    setForm(draft.form)
+    setRemovedExistingImageUrls(draft.removedExistingImageUrls)
+    setGalleryItems((currentItems) => {
+      cleanupPendingPreviewUrls(currentItems)
+      return draft.existingImageUrls.map((imageUrl, index) => ({
+        id: `existing-draft-${index}`,
+        kind: 'existing' as const,
+        imageUrl,
+      }))
     })
   }
 
@@ -154,19 +344,46 @@ export function ProductAdminPanel({
 
   function handleProductSelection(productId: string) {
     setSelectedProductId(productId)
+    writeLastProductSelection(productId)
     setFeedbackMessage(null)
-    setFeedbackErrorKind(null)
+    setFeedbackRetryable(false)
 
     if (productId === 'new') {
       resetToCreateMode()
-      return
+    } else {
+      const product = products.find((item) => item.id === productId)
+
+      if (product) {
+        applyProductToForm(product)
+      }
     }
 
-    const product = products.find((item) => item.id === productId)
+    // Re-apply any saved draft for this selection — switching away and back
+    // (or leaving the panel) never loses edits.
+    const draft = readProductFormDraft(productId)
 
-    if (product) {
-      applyProductToForm(product)
+    if (draft) {
+      applyDraftToForm(draft)
     }
+  }
+
+  function startCreate() {
+    triggerHapticFeedback('light')
+    handleProductSelection('new')
+    setViewMode('form')
+  }
+
+  function startEdit(product: Product) {
+    triggerHapticFeedback('light')
+    handleProductSelection(product.id)
+    setViewMode('form')
+  }
+
+  function cancelForm() {
+    resetToCreateMode()
+    setViewMode('list')
+    setFeedbackMessage(null)
+    setFeedbackRetryable(false)
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -180,16 +397,30 @@ export function ProductAdminPanel({
       .map((brand) => brand.trim())
       .filter(Boolean)
 
-    if (!trimmedName || !trimmedDescription || Number.isNaN(parsedPrice)) {
-      setFeedbackTone('error')
-      setFeedbackErrorKind('validation')
-      setFeedbackMessage('Name, description, and a valid price are required.')
+    if (
+      !trimmedName
+      || !trimmedDescription
+      || !Number.isFinite(parsedPrice)
+      || parsedPrice <= 0
+    ) {
+      showFeedback('error', 'Name, description, and a price greater than zero are required.')
+      return
+    }
+
+    if (
+      form.earlyAccessAt
+      && form.publicAt
+      && new Date(form.earlyAccessAt).getTime() >= new Date(form.publicAt).getTime()
+    ) {
+      showFeedback(
+        'error',
+        'Early Access start must be earlier than the Public Release time.',
+      )
       return
     }
 
     setIsSubmitting(true)
     setFeedbackMessage(null)
-    setFeedbackErrorKind(null)
 
     try {
       const pendingGalleryItems = galleryItems.filter(
@@ -217,9 +448,7 @@ export function ProductAdminPanel({
 
       if (nextImages.length === 0) {
         setIsSubmitting(false)
-        setFeedbackTone('error')
-        setFeedbackErrorKind('validation')
-        setFeedbackMessage('At least one product image is required before saving.')
+        showFeedback('error', 'At least one product image is required before saving.')
         return
       }
 
@@ -240,68 +469,47 @@ export function ProductAdminPanel({
       if (selectedProduct) {
         await updateProduct(initData, selectedProduct.id, payload)
         await deleteProductImages(initData, removedExistingImageUrls)
+        clearProductFormDraft(selectedProduct.id)
+        showFeedback('success', 'Product updated in Firestore.')
       } else {
         await createProduct(initData, payload)
+        clearProductFormDraft('new')
+        showFeedback('success', 'Product created in Firestore.')
       }
 
-      if (selectedProduct) {
-        // Reconstruct the form from saved payload, but keep Timestamp-typed fields from the original
-        applyProductToForm({
-          ...selectedProduct,
-          ...payload,
-          earlyAccessAt: selectedProduct.earlyAccessAt,
-          publicAt: selectedProduct.publicAt,
-        })
-      } else {
-        resetToCreateMode()
-      }
-
-      setFeedbackTone('success')
-      setFeedbackMessage(
-        selectedProduct
-          ? 'Product updated in Firestore.'
-          : 'Product created in Firestore.',
-      )
+      triggerHapticFeedback('light')
+      resetToCreateMode()
+      setViewMode('list')
       onProductsChanged()
     } catch (error) {
       const kind = classifyAdminError(error)
-      setFeedbackTone('error')
-      setFeedbackErrorKind(kind)
-      setFeedbackMessage(formatAdminErrorMessage(kind, error))
+      showFeedback('error', formatAdminErrorMessage(kind, error), true)
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  async function handleDeleteProduct() {
-    if (!selectedProduct) {
-      return
-    }
-
-    const shouldDelete = window.confirm(
-      `Delete "${selectedProduct.name}" from Firestore?`,
-    )
-
-    if (!shouldDelete) {
-      return
-    }
-
+  async function handleDeleteProduct(product: Product) {
     setIsSubmitting(true)
     setFeedbackMessage(null)
-    setFeedbackErrorKind(null)
 
     try {
-      await deleteProductImages(initData, selectedProduct.images)
-      await deleteProduct(initData, selectedProduct.id)
-      resetToCreateMode()
-      setFeedbackTone('success')
-      setFeedbackMessage('Product and its saved Storage images were deleted.')
+      await deleteProductImages(initData, product.images)
+      await deleteProduct(initData, product.id)
+      clearProductFormDraft(product.id)
+      writeLastProductSelection('new')
+      setDeleteConfirmId(null)
+      triggerHapticFeedback('light')
+      showFeedback('success', 'Product and its saved Storage images were deleted.')
+      // If the deleted product was being edited, drop back to a fresh create form.
+      if (selectedProductId === product.id) {
+        resetToCreateMode()
+        setViewMode('list')
+      }
       onProductsChanged()
     } catch (error) {
       const kind = classifyAdminError(error)
-      setFeedbackTone('error')
-      setFeedbackErrorKind(kind)
-      setFeedbackMessage(formatAdminErrorMessage(kind, error))
+      showFeedback('error', formatAdminErrorMessage(kind, error), true)
     } finally {
       setIsSubmitting(false)
     }
@@ -322,7 +530,6 @@ export function ProductAdminPanel({
 
     setIsSubmitting(true)
     setFeedbackMessage(null)
-    setFeedbackErrorKind(null)
 
     try {
       const soldProductImages = soldProducts.flatMap((product) => product.images)
@@ -330,14 +537,14 @@ export function ProductAdminPanel({
       await deleteProductImages(initData, soldProductImages)
       await deleteSoldProducts(initData, products)
       resetToCreateMode()
-      setFeedbackTone('success')
-      setFeedbackMessage('All sold products and their saved Storage images were deleted.')
+      soldProducts.forEach((product) => clearProductFormDraft(product.id))
+      writeLastProductSelection('new')
+      showFeedback('success', 'All sold products and their saved Storage images were deleted.')
+      setViewMode('list')
       onProductsChanged()
     } catch (error) {
       const kind = classifyAdminError(error)
-      setFeedbackTone('error')
-      setFeedbackErrorKind(kind)
-      setFeedbackMessage(formatAdminErrorMessage(kind, error))
+      showFeedback('error', formatAdminErrorMessage(kind, error), true)
     } finally {
       setIsSubmitting(false)
     }
@@ -444,364 +651,528 @@ export function ProductAdminPanel({
           Product Admin
         </p>
         <div className="flex items-center gap-2">
-          {soldProducts.length > 0 ? (
+          {viewMode === 'list' && soldProducts.length > 0 ? (
             <button
               type="button"
               onClick={handleDeleteSoldProducts}
               disabled={isSubmitting}
-              className="rounded-full border border-[var(--shop-red)]/30 bg-[var(--shop-red)]/12 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:opacity-50"
+              className="rounded-full border border-[var(--shop-red)]/30 bg-[var(--shop-red)]/12 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-opacity disabled:opacity-50"
             >
               Clear Sold ({soldProducts.length})
             </button>
           ) : null}
           <span className="rounded-full bg-[var(--shop-red)]/22 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-            Live
+            {viewMode === 'form' ? (selectedProduct ? 'Edit' : 'New') : 'Live'}
           </span>
         </div>
       </div>
 
-      {/* ── View filter pills ── */}
-      <div className="mt-4 flex gap-2">
-        {(['all', 'available', 'sold'] as const).map((view) => (
+      {/* ── Feedback ── */}
+      {feedbackMessage ? (
+        <AdminFeedbackBanner
+          tone={feedbackTone}
+          message={feedbackMessage}
+          className="mt-3"
+          onRetry={
+            feedbackRetryable && viewMode === 'form'
+              ? () => formRef.current?.requestSubmit()
+              : undefined
+          }
+        />
+      ) : null}
+
+      {/* ── List view ── */}
+      {viewMode === 'list' ? (
+        <>
+          {/* View filter pills */}
+          <div className="mt-4 flex gap-2">
+            {(['all', 'available', 'sold'] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setProductView(view)}
+                className={`rounded-full px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                  productView === view
+                    ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
+                    : 'bg-white/8 text-[var(--shop-muted)]'
+                }`}
+              >
+                {view}
+              </button>
+            ))}
+          </div>
+
+          {/* "+ Add New Product" action card */}
           <button
-            key={view}
             type="button"
-            onClick={() => setProductView(view)}
-            className={`rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${
-              productView === view
-                ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
-                : 'bg-white/8 text-[var(--shop-muted)]'
-            }`}
+            onClick={startCreate}
+            className="mt-4 flex w-full items-center gap-4 rounded-2xl border-2 border-dashed border-white/12 bg-[var(--shop-panel-solid)] px-5 py-6 text-left transition-all hover:border-white/25"
           >
-            {view}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/8">
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 shrink-0 text-[var(--shop-purple)]" aria-hidden="true">
+                <g transform="translate(2, 2)">
+                  <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </g>
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold tracking-[-0.02em] text-[var(--shop-cream)]">
+                Add New Product
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--shop-muted)]">
+                name · price · images · availability
+              </p>
+            </div>
+            <svg
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              className="ml-auto h-5 w-5 shrink-0 text-[var(--shop-muted)]"
+              aria-hidden="true"
+            >
+              <g transform="translate(2, 2)">
+                <path
+                  fillRule="evenodd"
+                  d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                  clipRule="evenodd"
+                />
+              </g>
+            </svg>
           </button>
-        ))}
-      </div>
 
-      <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
+          {/* Product rows */}
+          <div className="mt-4 space-y-3">
+            {filteredProducts.length === 0 ? (
+              <div className="rounded-2xl bg-white/8 px-4 py-8 text-center text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                {products.length === 0
+                  ? 'No products yet. Tap above to create your first one.'
+                  : 'No products match this filter.'}
+              </div>
+            ) : (
+              filteredProducts.map((product) => (
+                <div
+                  key={product.id}
+                  className={`flex flex-wrap items-center gap-2 rounded-2xl border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-3 transition-all ${
+                    product.isAvailable ? 'border-white/10' : 'border-white/6 opacity-55'
+                  }`}
+                >
+                  {/* Image thumbnail */}
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-black/30">
+                    {product.images[0] ? (
+                      <img
+                        src={product.images[0]}
+                        alt={product.name}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-[8px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                        No Img
+                      </div>
+                    )}
+                  </div>
 
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Mode
-          </span>
-          <CustomSelect
-            value={selectedProductId}
-            options={[
-              { value: 'new', label: 'Create new product' },
-              ...filteredProducts.map((p) => ({
-                value: p.id,
-                label: `Edit: ${p.name}`,
-              })),
-            ]}
-            onChange={handleProductSelection}
-          />
-        </label>
+                  {/* Info */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      {product.isLimitedLabel ? (
+                        <span className="shrink-0 rounded-full bg-[var(--shop-purple)]/18 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
+                          {product.isLimitedLabel}
+                        </span>
+                      ) : null}
+                      {product.isAvailable ? (
+                        <span className="shrink-0 rounded-full bg-emerald-300/18 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
+                          Available
+                        </span>
+                      ) : product.upcoming ? (
+                        <span className="shrink-0 rounded-full bg-amber-300/18 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-amber-100">
+                          Upcoming
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-[var(--shop-muted)]">
+                          Sold
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-sm font-bold tracking-[-0.02em] text-[var(--shop-cream)]">
+                      {product.name}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-[var(--shop-muted)]/70">
+                      €{product.price.toFixed(2)} · {product.category}
+                      {product.brandNames.length > 0 ? ` · ${product.brandNames.join(', ')}` : ''}
+                    </p>
+                    <p className="mt-0.5 text-[9px] text-[var(--shop-muted)]/50">
+                      ♥ {product.likesCount} · 🛒 {product.cartCount}
+                    </p>
+                  </div>
 
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Product Name
-          </span>
-          <Input
-            size="md"
-            focusColor="red"
-            value={form.name}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, name: event.target.value }))
-            }
-            placeholder="YungWear Heavyweight Hoodie"
-          />
-        </label>
+                  {/* Action buttons group — ml-auto keeps them right-aligned;
+                      on narrow screens the wrap moves them to their own line
+                      instead of overflowing the card. */}
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(product)}
+                      className="rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-colors hover:bg-white/14"
+                    >
+                      Edit
+                    </button>
 
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Description
-          </span>
-          <Input
-            size="md"
-            focusColor="red"
-            multiline
-            value={form.description}
-            onChange={(event) => {
-              setForm((current) => ({ ...current, description: event.target.value }))
-              event.target.style.height = 'auto'
-              event.target.style.height = `${event.target.scrollHeight}px`
-            }}
-            placeholder="Oversized hoodie for the first drop."
-            className="resize-none overflow-hidden"
-          />
-        </label>
+                    {deleteConfirmId === product.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteProduct(product)}
+                          disabled={isSubmitting}
+                          className="rounded-lg bg-[var(--shop-red)] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(null)}
+                          className="rounded-lg border border-white/10 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHapticFeedback('light')
+                          setDeleteConfirmId(product.id)
+                        }}
+                        className="rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-red)]/30 hover:bg-[var(--shop-red)]/12 hover:text-[var(--shop-red)]"
+                        aria-label="Delete product"
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                          <g transform="translate(4, 4)">
+                            <path d="M5.5 2a.5.5 0 01.5-.5h4a.5.5 0 01.5.5v1H5.5V2zM4 3.5V2a2 2 0 012-2h4a2 2 0 012 2v1.5h2.5a.5.5 0 010 1h-1.05l-.89 8.89A2 2 0 0110.59 14H5.41a2 2 0 01-1.97-1.61L2.55 4.5H1.5a.5.5 0 010-1H4zm1.05 1l.88 8.44a1 1 0 00.98.81h4.18a1 1 0 00.98-.81L12.95 4.5H5.05z" />
+                          </g>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      ) : (
+        /* ── Form view (create / edit) ── */
+        <form ref={formRef} className="mt-4 space-y-4" onSubmit={handleSubmit}>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-cream)]">
+              {selectedProduct ? 'Edit Product' : 'New Product'}
+            </p>
+            <button
+              type="button"
+              onClick={cancelForm}
+              disabled={isSubmitting}
+              className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
+            >
+              Cancel
+            </button>
+          </div>
 
-        <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-              Category
-            </span>
-            <CustomSelect
-              value={form.category}
-              options={PRODUCT_CATEGORIES.map((cat) => ({
-                value: cat,
-                label: cat,
-              }))}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  category: value as ProductCategory,
-                }))
-              }
-            />
-          </label>
-
-          <label className="block">
-            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-              Price EUR
+              Product Name
             </span>
             <Input
               size="md"
               focusColor="red"
-              value={form.price}
+              value={form.name}
               onChange={(event) =>
-                setForm((current) => ({ ...current, price: event.target.value }))
+                setForm((current) => ({ ...current, name: event.target.value }))
               }
-              inputMode="decimal"
-              placeholder="120"
+              placeholder="YungWear Heavyweight Hoodie"
             />
           </label>
-        </div>
 
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Brands
-          </span>
-          <Input
-            size="md"
-            focusColor="red"
-            value={form.brandNames}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, brandNames: event.target.value }))
-            }
-            placeholder="YungWear, Capsule Line"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Product Images
-          </span>
-
-          {/* Dashed dropzone */}
-          <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-white/14 bg-white/6 px-4 py-6 transition-colors hover:border-white/25">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="mb-2 h-6 w-6 shrink-0 text-[var(--shop-muted)]" aria-hidden="true">
-          <g transform="translate(2, 2)">
-
-              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636V13.25z" />
-              <path fillRule="evenodd" d="M3.5 12.75a.75.75 0 01.75.75v2.25a1 1 0 001 1h9.5a1 1 0 001-1V13.5a.75.75 0 011.5 0v2.25a2.5 2.5 0 01-2.5 2.5h-9.5a2.5 2.5 0 01-2.5-2.5V13.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
-            
-          </g>
-        </svg>
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-              Add Images
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+              Description
             </span>
-            <span className="mt-1 text-[10px] text-[var(--shop-muted)]/60">
-              Tap to browse or drag here
-            </span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(event) => handlePendingFileSelection(event.target.files)}
-              className="hidden"
+            <Input
+              size="md"
+              focusColor="red"
+              multiline
+              value={form.description}
+              onChange={(event) => {
+                setForm((current) => ({ ...current, description: event.target.value }))
+                event.target.style.height = 'auto'
+                event.target.style.height = `${event.target.scrollHeight}px`
+              }}
+              placeholder="Oversized hoodie for the first drop."
+              className="resize-none overflow-hidden"
             />
           </label>
-        </label>
 
-        {galleryItems.length > 0 ? (
-          <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-              Editable Gallery
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              {galleryItems.map((item, index) => (
-                <GalleryImageCard
-                  key={item.id}
-                  item={item}
-                  index={index}
-                  isDragging={activeDraggedGalleryItemId === item.id}
-                  dragPointerId={dragPointerIdRef.current}
-                  onPointerStart={handleGalleryPointerStart}
-                  onPointerMove={handleGalleryPointerMove}
-                  onPointerEnd={handleGalleryPointerEnd}
-                  onRemoveExisting={handleRemoveExistingImage}
-                  onRemovePending={handleRemovePendingImage}
-                />
-              ))}
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+                Category
+              </span>
+              <CustomSelect
+                value={form.category}
+                options={PRODUCT_CATEGORIES.map((cat) => ({
+                  value: cat,
+                  label: cat,
+                }))}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    category: value as ProductCategory,
+                  }))
+                }
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+                Price EUR
+              </span>
+              <Input
+                size="md"
+                focusColor="red"
+                value={form.price}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, price: event.target.value }))
+                }
+                inputMode="decimal"
+                placeholder="120"
+              />
+            </label>
           </div>
-        ) : null}
 
-        <label className="block">
-          <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            Limited Label
-          </span>
-          <Input
-            size="md"
-            focusColor="red"
-            value={form.isLimitedLabel}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, isLimitedLabel: event.target.value }))
-            }
-            placeholder="Limited Drop"
-          />
-        </label>
-
-        <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
-          <span className="text-sm text-[var(--shop-cream)]">Product is available</span>            <button
-            type="button"
-            role="switch"
-            aria-checked={form.isAvailable}
-            aria-label="Toggle product availability"
-            onClick={() =>
-              setForm((current) => ({ ...current, isAvailable: !current.isAvailable }))
-            }
-            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
-              form.isAvailable ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
-            }`}
-          >
-            <span
-              className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
-                form.isAvailable ? 'translate-x-5' : 'translate-x-0'
-              }`}
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+              Brands
+            </span>
+            <Input
+              size="md"
+              focusColor="red"
+              value={form.brandNames}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, brandNames: event.target.value }))
+              }
+              placeholder="YungWear, Capsule Line"
             />
-          </button>
-        </label>
+          </label>
 
-        {/* Upcoming toggle — only when not available */}
-        {!form.isAvailable ? (
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+              Product Images
+            </span>
+
+            {/* Dashed dropzone */}
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-white/14 bg-white/6 px-4 py-6 transition-colors hover:border-white/25">
+              <svg viewBox="0 0 24 24" fill="currentColor" className="mb-2 h-6 w-6 shrink-0 text-[var(--shop-muted)]" aria-hidden="true">
+                <g transform="translate(2, 2)">
+                  <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636V13.25z" />
+                  <path fillRule="evenodd" d="M3.5 12.75a.75.75 0 01.75.75v2.25a1 1 0 001 1h9.5a1 1 0 001-1V13.5a.75.75 0 011.5 0v2.25a2.5 2.5 0 01-2.5 2.5h-9.5a2.5 2.5 0 01-2.5-2.5V13.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
+                </g>
+              </svg>
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                Add Images
+              </span>
+              <span className="mt-1 text-[10px] text-[var(--shop-muted)]/60">
+                Tap to browse or drag here
+              </span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(event) => handlePendingFileSelection(event.target.files)}
+                className="hidden"
+              />
+            </label>
+            <p className="mt-2 text-[10px] leading-relaxed text-stone-500">
+              Square 1:1 images look best — the first image is the product cover.
+            </p>
+          </label>
+
+          {galleryItems.length > 0 ? (
+            <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+                Editable Gallery
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                {galleryItems.map((item, index) => (
+                  <GalleryImageCard
+                    key={item.id}
+                    item={item}
+                    index={index}
+                    isDragging={activeDraggedGalleryItemId === item.id}
+                    dragPointerId={dragPointerIdRef.current}
+                    onPointerStart={handleGalleryPointerStart}
+                    onPointerMove={handleGalleryPointerMove}
+                    onPointerEnd={handleGalleryPointerEnd}
+                    onRemoveExisting={handleRemoveExistingImage}
+                    onRemovePending={handleRemovePendingImage}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+              Limited Label
+            </span>
+            <Input
+              size="md"
+              focusColor="red"
+              value={form.isLimitedLabel}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, isLimitedLabel: event.target.value }))
+              }
+              placeholder="Limited Drop"
+            />
+          </label>
+
           <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
-            <span className="text-sm text-[var(--shop-cream)]">Mark as Upcoming</span>
+            <span className="text-sm text-[var(--shop-cream)]">Product is available</span>
             <button
               type="button"
               role="switch"
-              aria-checked={form.upcoming}
-              aria-label="Toggle upcoming status"
+              aria-checked={form.isAvailable}
+              aria-label="Toggle product availability"
               onClick={() =>
-                setForm((current) => ({ ...current, upcoming: !current.upcoming }))
+                setForm((current) => ({ ...current, isAvailable: !current.isAvailable }))
               }
               className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
-                form.upcoming ? 'bg-amber-500' : 'bg-white/15'
+                form.isAvailable ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
               }`}
             >
               <span
                 className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
-                  form.upcoming ? 'translate-x-5' : 'translate-x-0'
+                  form.isAvailable ? 'translate-x-5' : 'translate-x-0'
                 }`}
               />
             </button>
           </label>
-        ) : (
-          <input type="hidden" value={String(form.upcoming)} />
-        )}
 
-        {/* Early Access scheduling — only when product is available */}
-        {form.isAvailable ? (
-          <div className="space-y-3 rounded-2xl border border-amber-500/20 bg-amber-500/6 px-4 py-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
-              Early Access Scheduling
-            </p>
-            <label className="block">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
-                Early Access Start
-              </span>
-              <Input
-                size="md"
-                focusColor="red"
-                type="datetime-local"
-                value={form.earlyAccessAt}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, earlyAccessAt: event.target.value }))
-                }
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
-                Public Release
-              </span>
-              <Input
-                size="md"
-                focusColor="red"
-                type="datetime-local"
-                value={form.publicAt}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, publicAt: event.target.value }))
-                }
-              />
-            </label>
-            <p className="text-[10px] leading-relaxed text-stone-500">
-              Set an early access window where only users with at least 1 referral can purchase. After the public release time, everyone can buy.
-            </p>
-          </div>
-        ) : null}
-
-        {/* Slow-save hint — shown after 15s of submitting */}
-        {showSlowSaveHint ? (
-          <p className="rounded-2xl bg-amber-500/12 px-4 py-3 text-sm text-amber-200">
-            Save is still in progress. Large images can take up to a minute to upload.
-          </p>
-        ) : null}
-
-        {feedbackMessage ? (
-          <div
-            className={`rounded-2xl px-4 py-3 text-sm ${
-              feedbackTone === 'success'
-                ? 'bg-emerald-300/18 text-emerald-100'
-                : 'bg-[var(--shop-red)]/18 text-[var(--shop-cream)]'
-            }`}
-          >
-            <p>{feedbackMessage}</p>
-            {/* Retry button for recoverable errors */}
-            {feedbackTone === 'error' && feedbackErrorKind && feedbackErrorKind !== 'validation' ? (
+          {/* Upcoming toggle — only when not available */}
+          {!form.isAvailable ? (
+            <label className="flex cursor-pointer items-center justify-between rounded-2xl bg-white/8 px-4 py-3">
+              <span className="text-sm text-[var(--shop-cream)]">Mark as Upcoming</span>
               <button
                 type="button"
-                onClick={(event) => {
-                  // Re-trigger the form submit
-                  event.preventDefault()
-                  const form = (event.currentTarget as HTMLElement).closest('form')
-                  if (form) form.requestSubmit()
-                }}
-                className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition-colors hover:bg-white/18"
+                role="switch"
+                aria-checked={form.upcoming}
+                aria-label="Toggle upcoming status"
+                onClick={() =>
+                  setForm((current) => ({ ...current, upcoming: !current.upcoming }))
+                }
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+                  form.upcoming ? 'bg-amber-500' : 'bg-white/15'
+                }`}
               >
-                Try Again
+                <span
+                  className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
+                    form.upcoming ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
               </button>
-            ) : null}
+            </label>
+          ) : (
+            <input type="hidden" value={String(form.upcoming)} />
+          )}
+
+          {/* Scheduling hint — the dates only take effect once the product is available */}
+          {!form.isAvailable ? (
+            <p className="text-[10px] leading-relaxed text-stone-500">
+              Early-access dates apply to available products only — toggle
+              availability on to schedule the drop window.
+            </p>
+          ) : null}
+
+          {/* Early Access scheduling — only when product is available */}
+          {form.isAvailable ? (
+            <div className="space-y-3 rounded-2xl border border-amber-500/20 bg-amber-500/6 px-4 py-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
+                Early Access Scheduling
+              </p>
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                  Early Access Start
+                </span>
+                <Input
+                  size="md"
+                  focusColor="red"
+                  type="datetime-local"
+                  value={form.earlyAccessAt}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, earlyAccessAt: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                  Public Release
+                </span>
+                <Input
+                  size="md"
+                  focusColor="red"
+                  type="datetime-local"
+                  value={form.publicAt}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, publicAt: event.target.value }))
+                  }
+                />
+                <p className="mt-1.5 text-[10px] leading-relaxed text-stone-500">
+                  When this time passes, the drop opens to everyone — early access ends.
+                </p>
+              </label>
+              <p className="text-[10px] leading-relaxed text-stone-500">
+                Set an early access window where only users with at least{' '}
+                {EARLY_ACCESS_REFERRAL_THRESHOLD} referral
+                {EARLY_ACCESS_REFERRAL_THRESHOLD === 1 ? '' : 's'} can purchase. After
+                the public release time, everyone can buy.
+              </p>
+            </div>
+          ) : null}
+
+          {/* Slow-save hint — shown after 15s of submitting */}
+          {showSlowSaveHint ? (
+            <p className="rounded-2xl bg-amber-500/12 px-4 py-3 text-sm text-amber-200">
+              Save is still in progress. Large images can take up to a minute to upload.
+            </p>
+          ) : null}
+
+          {/* Save & Cancel buttons */}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={cancelForm}
+              disabled={isSubmitting}
+              className="flex-1 rounded-xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)] transition-colors disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className={`flex-1 rounded-xl px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-white transition-all ${
+                isSubmitting
+                  ? 'bg-white/15 text-[var(--shop-muted)]'
+                  : selectedProduct
+                    ? 'border border-[var(--shop-purple)] bg-[var(--shop-purple)]/40'
+                    : 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] shadow-[0_4px_16px_rgba(139,61,255,0.3)]'
+              }`}
+            >
+              {isSubmitting
+                ? 'Saving...'
+                : selectedProduct
+                  ? 'Save Changes'
+                  : 'Create Product'}
+            </button>
           </div>
-        ) : null}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className={`w-full rounded-2xl px-4 py-3 text-sm font-bold uppercase tracking-[0.2em] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
-            selectedProduct
-              ? 'border-2 border-[var(--shop-purple)] bg-[var(--shop-purple)]/12 text-[var(--shop-purple)]'
-              : 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)]'
-          }`}
-        >
-          {isSubmitting
-            ? 'Saving...'
-            : selectedProduct
-              ? 'SAVE CHANGES'
-              : 'CREATE PRODUCT'}
-        </button>
-
-        {selectedProduct ? (
-          <button
-            type="button"
-            onClick={handleDeleteProduct}
-            disabled={isSubmitting}
-            className="w-full rounded-2xl border border-[var(--shop-red)]/30 bg-[var(--shop-red)]/12 px-4 py-3 text-sm font-semibold text-[var(--shop-cream)] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Delete Product
-          </button>
-        ) : null}
-      </form>
+        </form>
+      )}
     </article>
   )
 }
@@ -940,4 +1311,3 @@ function formatTimestampForDatetimeLocal(
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-

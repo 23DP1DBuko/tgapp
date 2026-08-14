@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 
 import { buildRouteHash, readRouteFromHash } from '../lib/storeRoute'
 import { withViewTransition } from '../lib/viewTransition'
+import { translate } from '../lib/i18n/translate'
+import type { TranslationKey } from '../lib/i18n/translations'
 import type { AdminSubView } from '../lib/storeRoute'
 import type { ProductCategory } from '../types/product'
 
@@ -14,7 +16,7 @@ export type StoreScreen =
   | 'checkout'
   | 'success'
   | 'rewards'
-  | 'polls'
+  | 'preferences'
   | 'privacy'
   | 'terms'
   | 'about'
@@ -42,7 +44,7 @@ export type UseStoreNavigationResult = {
   setCheckoutStep: React.Dispatch<React.SetStateAction<number>>
   setTelegramGateMessage: React.Dispatch<React.SetStateAction<string | null>>
   setPromoCodeRaw: React.Dispatch<React.SetStateAction<string>>
-  requireTelegramAccess: (actionLabel: string) => boolean
+  requireTelegramAccess: (actionKey: TranslationKey) => boolean
   handleOpenCatalog: () => void
   handleResetCatalogFilters: () => void
   handleOpenMyOrders: () => void
@@ -50,7 +52,7 @@ export type UseStoreNavigationResult = {
   handleOpenProduct: (productId: string) => void
   handleOpenCart: () => void
   handleOpenRewards: () => void
-  handleOpenPolls: () => void
+  handleOpenPreferences: () => void
   handleSelectCollectionView: (view: 'all' | 'liked') => void
   handleOpenLikedProduct: (productId: string) => void
   handleBackFromProduct: () => void
@@ -83,13 +85,13 @@ export function useStoreNavigation(
 
   // --- Helpers ---
 
-  function requireTelegramAccess(actionLabel: string) {
+  function requireTelegramAccess(actionKey: TranslationKey) {
     if (hasTelegramBuyerAccess) {
       return true
     }
 
     setTelegramGateMessage(
-      `${actionLabel} is available only inside the Telegram Mini App with a real Telegram session. Open the app in Telegram to continue with real likes, cart, and checkout.`,
+      translate('gate.message', { action: translate(actionKey) }),
     )
 
     return false
@@ -111,14 +113,14 @@ export function useStoreNavigation(
   }
 
   function handleOpenMyOrders() {
-    if (!requireTelegramAccess('Order history')) {
+    if (!requireTelegramAccess('gateAction.orders')) {
       return
     }
     setStoreScreen('orders')
   }
 
   function handleOpenLikes() {
-    if (!requireTelegramAccess('Saved likes')) {
+    if (!requireTelegramAccess('gateAction.savedLikes')) {
       return
     }
     setStoreCollectionView('liked')
@@ -133,24 +135,21 @@ export function useStoreNavigation(
   }
 
   function handleOpenCart() {
-    if (!requireTelegramAccess('Cart')) {
+    if (!requireTelegramAccess('gateAction.cart')) {
       return
     }
     setStoreScreen('cart')
   }
 
   function handleOpenRewards() {
-    if (!requireTelegramAccess('Rewards')) {
+    if (!requireTelegramAccess('gateAction.rewards')) {
       return
     }
     setStoreScreen('rewards')
   }
 
-  function handleOpenPolls() {
-    if (!requireTelegramAccess('Community Polls')) {
-      return
-    }
-    setStoreScreen('polls')
+  function handleOpenPreferences() {
+    setStoreScreen('preferences')
   }
 
   function handleSelectCollectionView(view: 'all' | 'liked') {
@@ -232,7 +231,7 @@ export function useStoreNavigation(
     handleOpenProduct,
     handleOpenCart,
     handleOpenRewards,
-    handleOpenPolls,
+    handleOpenPreferences,
     handleSelectCollectionView,
     handleOpenLikedProduct,
     handleBackFromProduct,

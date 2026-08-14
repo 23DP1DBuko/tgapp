@@ -21,6 +21,12 @@ import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
 const DEFAULT_ADMIN_UPSERT_PRODUCT_URL = '/api/admin/upsertProduct'
 const DEFAULT_ADMIN_DELETE_PRODUCTS_URL = '/api/admin/deleteProducts'
 const DEFAULT_UPDATE_PRODUCT_SIGNAL_URL = '/api/products/updateSignal'
+const DEFAULT_ADMIN_SET_PRODUCT_DISCOUNT_URL = '/api/admin/setProductDiscount'
+
+// Shared catalog cap (L3): previously the buyer catalog stopped at 12 and admin
+// pickers at 50, so drops beyond that were invisible. A small curated store fits
+// comfortably under this generous bound; revisit pagination only if it grows.
+const PRODUCTS_QUERY_LIMIT = 500
 
 type ProductDocument = Omit<Product, 'id' | 'createdAt'> & {
   createdAt?: Timestamp
@@ -38,10 +44,18 @@ export type CreateProductInput = {
   upcoming?: boolean
   earlyAccessAt?: string | null
   publicAt?: string | null
+  /** Optional sale. Omit/undefined leaves any existing discount untouched. */
+  discountType?: 'percentage' | 'fixed' | null
+  discountValue?: number | null
+}
+
+export type SetProductDiscountInput = {
+  discountType: 'percentage' | 'fixed' | null
+  discountValue: number | null
 }
 
 function toProductAdminPayload(input: CreateProductInput) {
-  return {
+  const payload: Record<string, unknown> = {
     name: input.name,
     description: input.description,
     category: input.category,
@@ -54,6 +68,18 @@ function toProductAdminPayload(input: CreateProductInput) {
     earlyAccessAt: input.earlyAccessAt ?? null,
     publicAt: input.publicAt ?? null,
   }
+
+  // Discount fields are only sent when explicitly provided, so the main
+  // product form (which doesn't edit discounts) never wipes one set from the
+  // Discounts admin page (the upsert uses merge semantics server-side).
+  if (input.discountType !== undefined) {
+    payload.discountType = input.discountType ?? null
+  }
+  if (input.discountValue !== undefined) {
+    payload.discountValue = input.discountValue ?? null
+  }
+
+  return payload
 }
 
 async function readErrorReason(response: Response): Promise<string> {
@@ -86,6 +112,11 @@ function toProduct(snapshot: QueryDocumentSnapshot<ProductDocument>): Product {
     brandNames: Array.isArray(data.brandNames) ? data.brandNames : [],
     price: typeof data.price === 'number' ? data.price : 0,
     currency: data.currency === 'EUR' ? 'EUR' : 'EUR',
+    discountType:
+      data.discountType === 'percentage' || data.discountType === 'fixed'
+        ? data.discountType
+        : null,
+    discountValue: typeof data.discountValue === 'number' ? data.discountValue : null,
     isAvailable: Boolean(data.isAvailable),
     likesCount: typeof data.likesCount === 'number' ? data.likesCount : 0,
     cartCount: typeof data.cartCount === 'number' ? data.cartCount : 0,
@@ -109,7 +140,7 @@ function getProductsQuery() {
     return null
   }
 
-  return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(12))
+  return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(PRODUCTS_QUERY_LIMIT))
 }
 
 function getAllProductsQuery() {
@@ -119,11 +150,11 @@ function getAllProductsQuery() {
     return null
   }
 
-  return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(50))
+  return query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(PRODUCTS_QUERY_LIMIT))
 }
 
 /**
- * Fetch up to 50 active (available) products for use in product pickers/modals.
+ * Fetch the catalog (up to PRODUCTS_QUERY_LIMIT) for product pickers/modals.
  */
 export async function listAllProducts(): Promise<Product[]> {
   const productsQuery = getAllProductsQuery()
@@ -283,6 +314,46 @@ export async function updateProductCartCount(
   }, { maxRetries: 2, shouldRetry: isTransientError })
 }
 
+/**
+ * Set or remove a product's discount (admin only). `discountType: null` clears it.
+ * Throws a descriptive error on failure.
+ */
+export async function setProductDiscount(
+  initData: string,
+  productId: string,
+  input: SetProductDiscountInput,
+): Promise<void> {
+  await withRetry(async () => {
+    const response = await fetchWithTimeout(
+      import.meta.env.VITE_ADMIN_SET_PRODUCT_DISCOUNT_URL || DEFAULT_ADMIN_SET_PRODUCT_DISCOUNT_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData,
+          productId,
+          discount: input,
+        }),
+      },
+    )
+
+    // The backend always answers with JSON. A non-JSON success (e.g. the SPA
+    // index.html when the hosting rewrite for this endpoint is missing) would
+    // otherwise look like a silent success while nothing is persisted.
+    const isJson =
+      (response.headers.get('content-type') ?? '').includes('application/json')
+    if (!response.ok || !isJson) {
+      throw new Error(
+        isJson
+          ? `${await readErrorReason(response)}`
+          : 'Discount endpoint not reachable — redeploy functions & hosting, then retry.',
+      )
+    }
+  }, { maxRetries: 1, shouldRetry: isTransientError })
+}
+
 export async function deleteProduct(initData: string, productId: string): Promise<void> {
   await withRetry(async () => {
     const response = await fetchWithTimeout(
@@ -305,72 +376,6 @@ export async function deleteProduct(initData: string, productId: string): Promis
   }, { maxRetries: 1, shouldRetry: isTransientError })}
 
 
-
-// ── Reservation API ──
-
-const DEFAULT_PRODUCT_RESERVE_URL = '/api/products/reserve'
-const DEFAULT_PRODUCT_RELEASE_RESERVATION_URL = '/api/products/releaseReservation'
-
-type ReserveProductResponse = {
-  ok?: boolean
-  reservedUntil?: string | null
-  reason?: string
-  detail?: string
-}
-
-export async function reserveProduct(
-  initData: string,
-  productId: string,
-): Promise<{ reserved: boolean; reservedUntil: string | null; reason: string }> {
-  return withRetry(async () => {
-    const response = await fetchWithTimeout(
-      import.meta.env.VITE_PRODUCT_RESERVE_URL || DEFAULT_PRODUCT_RESERVE_URL,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, productId }),
-      },
-    )
-
-    if (!response.ok) {
-      const result = (await response.json().catch(() => ({}))) as Partial<ReserveProductResponse>
-      return {
-        reserved: false,
-        reservedUntil: null,
-        reason: result.reason ?? `http_${response.status}`,
-      }
-    }
-
-    const result = (await response.json()) as ReserveProductResponse
-
-    return {
-      reserved: result.ok === true,
-      reservedUntil: result.reservedUntil ?? null,
-      reason: result.reason ?? 'reserved',
-    }
-  }, { maxRetries: 2, shouldRetry: isTransientError })
-}
-
-export async function releaseProductReservation(
-  initData: string,
-  productId: string,
-): Promise<void> {
-  await withRetry(async () => {
-    const response = await fetchWithTimeout(
-      import.meta.env.VITE_PRODUCT_RELEASE_RESERVATION_URL || DEFAULT_PRODUCT_RELEASE_RESERVATION_URL,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, productId }),
-      },
-    )
-
-    if (!response.ok) {
-      const reason = await readErrorReason(response)
-      throw new Error(`Failed to release reservation: ${reason}.`)
-    }
-  }, { maxRetries: 1, shouldRetry: isTransientError })
-}
 
 export async function deleteSoldProducts(initData: string, products: Product[]): Promise<void> {
   const soldProducts = products.filter((product) => !product.isAvailable)

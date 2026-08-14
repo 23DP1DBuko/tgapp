@@ -2,6 +2,7 @@ import {
   collection,
   getDocs,
   limit as fsLimit,
+  onSnapshot,
   orderBy,
   query,
   where,
@@ -13,9 +14,44 @@ import type {
   Giveaway,
   GiveawayInput,
   GiveawayEntry,
+  GiveawayLeaderboardEntry,
 } from '../../types/rewards'
 import type { EntryTaskType } from '../../types/rewards'
 import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
+import { getTelegramWebAppState } from '../telegram/webApp'
+
+// ── Short-lived cache for getGiveawayEntries ──
+// Reopening a giveaway detail sheet (or reopening the app) renders the user's
+// own entry instantly instead of waiting on a cold round-trip. Join/task
+// completion refetches inside the sheet, which overwrites the cache entry.
+// Keyed by user id + giveaway id because the payload contains the per-user
+// `myEntry` — a shared device must never serve one user's entry to another
+// (M3).
+const ENTRIES_CACHE_TTL_MS = 15_000
+const entriesCache = new Map<
+  string,
+  {
+    at: number
+    data: {
+      entries: GiveawayLeaderboardEntry[]
+      myEntry: GiveawayEntry | null
+      totalParticipants: number
+    }
+  }
+>()
+
+function currentCacheUserId(): string {
+  try {
+    const id = getTelegramWebAppState().user?.id
+    return typeof id === 'number' ? String(id) : 'anon'
+  } catch {
+    return 'anon'
+  }
+}
+
+export function invalidateGiveawayEntriesCache(giveawayId: string): void {
+  entriesCache.delete(`${currentCacheUserId()}:${giveawayId}`)
+}
 
 const COLLECTION = 'giveaways'
 
@@ -24,7 +60,6 @@ const DEFAULT_DELETE_GIVEAWAYS_URL = '/api/admin/deleteGiveaways'
 const DEFAULT_JOIN_GIVEAWAY_URL = '/api/giveaways/join'
 const DEFAULT_COMPLETE_TASK_URL = '/api/giveaways/completeTask'
 const DEFAULT_GET_ENTRIES_URL = '/api/giveaways/entries'
-const DEFAULT_GET_MY_ENTRY_URL = '/api/giveaways/myEntry'
 const DEFAULT_DRAW_GIVEAWAY_URL = '/api/admin/drawGiveaway'
 
 type GiveawayDocument = {
@@ -34,6 +69,7 @@ type GiveawayDocument = {
   status: string
   startAt: string | null
   endAt: string
+  prizesForSale?: boolean
   prizes: Array<{
     productId: string
     productName: string
@@ -85,10 +121,11 @@ type JoinResponse = ApiResponse & {
 type CompleteTaskResponse = ApiResponse & {
   totalTickets?: number
   taskTicketsGranted?: number
+  requiredCount?: number
 }
 
 type GetEntriesResponse = ApiResponse & {
-  entries?: GiveawayEntry[]
+  entries?: GiveawayLeaderboardEntry[]
   totalParticipants?: number
   myEntry?: GiveawayEntry | null
 }
@@ -128,6 +165,7 @@ function toGiveaway(docSnapshot: QueryDocumentSnapshot<GiveawayDocument>): Givea
       : 'draft') as Giveaway['status'],
     startAt: typeof data.startAt === 'string' ? data.startAt : null,
     endAt: data.endAt ?? '',
+    prizesForSale: data.prizesForSale === true,
     imageUrl: data.imageUrl ?? '',
     prizes: Array.isArray(data.prizes)
       ? data.prizes.map((p) => ({
@@ -145,7 +183,7 @@ function toGiveaway(docSnapshot: QueryDocumentSnapshot<GiveawayDocument>): Givea
           type: (['join_channel', 'invite_friend', 'like_product', 'custom'].includes(t.type) ? t.type : 'custom') as EntryTaskType,
           label: t.label ?? '',
           ticketsGranted: typeof t.ticketsGranted === 'number' ? t.ticketsGranted : 1,
-          verifyMethod: (['telegram_api', 'referral_count', 'manual'].includes(t.verifyMethod) ? t.verifyMethod : 'manual') as 'telegram_api' | 'referral_count' | 'manual',
+          verifyMethod: (['telegram_api', 'referral_count', 'client_claim', 'manual'].includes(t.verifyMethod) ? t.verifyMethod : 'manual') as 'telegram_api' | 'referral_count' | 'client_claim' | 'manual',
           metadata: t.metadata || undefined,
         }))
       : [],
@@ -201,6 +239,41 @@ export async function listActiveGiveaways(limitCount = 10): Promise<Giveaway[]> 
 
   const snapshot = await getDocs(q)
   return snapshot.docs.map((doc) => toGiveaway(doc as QueryDocumentSnapshot<GiveawayDocument>))
+}
+
+/**
+ * Live subscription to giveaways (public read). Used by the storefront so
+ * prize badges / "given away" locks update in real time when the admin
+ * changes a giveaway — no page reload required.
+ */
+export function subscribeToGiveaways(
+  onNext: (giveaways: Giveaway[]) => void,
+  onError: (message: string) => void,
+): () => void {
+  const db = getFirestoreDb()
+
+  if (!db) {
+    onNext([])
+    return () => undefined
+  }
+
+  const q = query(
+    collection(db, COLLECTION),
+    orderBy('createdAt', 'desc'),
+    fsLimit(50),
+  )
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onNext(
+        snapshot.docs.map((doc) => toGiveaway(doc as QueryDocumentSnapshot<GiveawayDocument>)),
+      )
+    },
+    (error) => {
+      onError(error.message || 'Failed to subscribe to giveaways.')
+    },
+  )
 }
 
 // ── Admin CRUD ──
@@ -315,7 +388,14 @@ export async function completeGiveawayTask(
   initData: string,
   giveawayId: string,
   taskId: string,
-): Promise<{ completed: boolean; totalTickets: number; taskTicketsGranted: number; reason: string }> {
+): Promise<{
+  completed: boolean
+  totalTickets: number
+  taskTicketsGranted: number
+  reason: string
+  detail?: string
+  requiredCount?: number
+}> {
   return withRetry(async () => {
     const response = await fetchWithTimeout(
       import.meta.env.VITE_COMPLETE_TASK_URL || DEFAULT_COMPLETE_TASK_URL,
@@ -333,6 +413,8 @@ export async function completeGiveawayTask(
         totalTickets: 0,
         taskTicketsGranted: 0,
         reason: result.reason ?? `http_${response.status}`,
+        detail: result.detail,
+        requiredCount: result.requiredCount,
       }
     }
 
@@ -343,6 +425,8 @@ export async function completeGiveawayTask(
       totalTickets: result.totalTickets ?? 0,
       taskTicketsGranted: result.taskTicketsGranted ?? 0,
       reason: result.reason ?? 'completed',
+      detail: result.detail,
+      requiredCount: result.requiredCount,
     }
   }, { maxRetries: 1, shouldRetry: isTransientError })
 }
@@ -350,7 +434,14 @@ export async function completeGiveawayTask(
 export async function getGiveawayEntries(
   initData: string,
   giveawayId: string,
-): Promise<{ entries: GiveawayEntry[]; myEntry: GiveawayEntry | null; totalParticipants: number }> {
+): Promise<{ entries: GiveawayLeaderboardEntry[]; myEntry: GiveawayEntry | null; totalParticipants: number }> {
+  // Serve a fresh-enough cached snapshot instantly (detail-sheet reopen).
+  const cacheKey = `${currentCacheUserId()}:${giveawayId}`
+  const cached = entriesCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < ENTRIES_CACHE_TTL_MS) {
+    return cached.data
+  }
+
   return withRetry(async () => {
     const response = await fetchWithTimeout(
       import.meta.env.VITE_GET_ENTRIES_URL || DEFAULT_GET_ENTRIES_URL,
@@ -367,38 +458,13 @@ export async function getGiveawayEntries(
 
     const result = (await response.json()) as GetEntriesResponse
 
-    return {
+    const data = {
       entries: Array.isArray(result.entries) ? result.entries : [],
       myEntry: result.myEntry ?? null,
       totalParticipants: result.totalParticipants ?? 0,
     }
-  }, { maxRetries: 1, shouldRetry: isTransientError })
-}
-
-export async function getMyGiveawayEntry(
-  initData: string,
-  giveawayId: string,
-): Promise<{ entry: GiveawayEntry | null }> {
-  return withRetry(async () => {
-    const response = await fetchWithTimeout(
-      import.meta.env.VITE_GET_MY_ENTRY_URL || DEFAULT_GET_MY_ENTRY_URL,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, giveawayId }),
-      },
-    )
-
-    if (!response.ok) {
-      return { entry: null }
-    }
-
-    const result = (await response.json()) as {
-      ok: boolean
-      entry: GiveawayEntry | null
-    }
-
-    return { entry: result.entry ?? null }
+    entriesCache.set(cacheKey, { at: Date.now(), data })
+    return data
   }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 

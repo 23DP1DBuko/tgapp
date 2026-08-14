@@ -4,6 +4,7 @@ import {
   listBroadcasts,
   sendBroadcast,
 } from '../../lib/firebase/broadcasts'
+import { AdminFeedbackBanner } from '../ui/AdminFeedbackBanner'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import type { Broadcast } from '../../types/broadcast'
 
@@ -24,6 +25,7 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
     tone: 'success' | 'error'
     message: string
   } | null>(null)
+  const [confirmSend, setConfirmSend] = useState(false)
   async function loadHistory() {
     try {
       setLoading(true)
@@ -64,6 +66,7 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
         message: 'Broadcast sent to all subscribers.',
       })
       setComposeText('')
+      setConfirmSend(false)
     } catch (err) {
       setFeedback({
         tone: 'error',
@@ -131,15 +134,11 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
 
       {/* ── Feedback Banner ── */}
       {feedback ? (
-        <div
-          className={`mx-5 mt-4 rounded-2xl px-4 py-3 text-sm ${
-            feedback.tone === 'success'
-              ? 'bg-emerald-300/18 text-emerald-100'
-              : 'bg-[var(--shop-red)]/18 text-[var(--shop-cream)]'
-          }`}
-        >
-          {feedback.message}
-        </div>
+        <AdminFeedbackBanner
+          tone={feedback.tone}
+          message={feedback.message}
+          className="mx-5 mt-4"
+        />
       ) : null}
 
       {/* ── Compose View ── */}
@@ -151,7 +150,10 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
             </span>
             <textarea
               value={composeText}
-              onChange={(event) => setComposeText(event.target.value)}
+              onChange={(event) => {
+                setComposeText(event.target.value)
+                setConfirmSend(false)
+              }}
               placeholder="Write your broadcast message to all Telegram subscribers..."
               className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm leading-6 text-[var(--shop-cream)] outline-none transition placeholder:text-[var(--shop-muted)]/70 focus:border-[var(--shop-purple)]"
               maxLength={2000}
@@ -164,12 +166,38 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
 
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => setConfirmSend(true)}
             disabled={!canSend}
             className="mt-4 w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
           >
             {sending ? 'SENDING...' : 'SEND TO ALL SUBSCRIBERS'}
           </button>
+
+          {confirmSend ? (
+            <div className="mt-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-300">
+                Send this message to every subscriber? This cannot be undone.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmSend(false)}
+                  disabled={sending}
+                  className="flex-1 rounded-xl border border-white/15 bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-colors hover:bg-white/14 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={sending}
+                  className="flex-1 rounded-xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                >
+                  {sending ? 'SENDING...' : 'Confirm Send'}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -254,7 +282,7 @@ export function BroadcastAdminPanel({ initData }: BroadcastAdminPanelProps) {
 
                     {/* Failure reason alert */}
                     {broadcast.failedCount > 0 && broadcast.reason ? (
-                      <div className="mt-2 rounded-xl bg-[var(--shop-red)]/14 px-3 py-2 text-[10px] font-medium leading-5 text-[var(--shop-red)]/90">
+                      <div className="mt-2 rounded-xl bg-[var(--shop-red)]/14 px-3.5 py-2.5 text-[11px] font-medium leading-5 text-[var(--shop-red)]/90">
                         Reason: {broadcast.reason}
                       </div>
                     ) : null}

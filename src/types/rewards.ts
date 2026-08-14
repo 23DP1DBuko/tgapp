@@ -18,6 +18,7 @@ export type EntryTaskType =
 export type EntryTaskVerifyMethod =
   | 'telegram_api'
   | 'referral_count'
+  | 'client_claim'
   | 'manual'
 
 export type GiveawayPrizeInput = {
@@ -67,6 +68,10 @@ export interface Giveaway {
   startAt: string | null
   endAt: string
   prizes: GiveawayPrize[]
+  /** Admin toggle: when true, prize products are sellable in the store again
+   *  (e.g. after the draw when the winner declined). The storefront skips
+   *  this giveaway when computing prize/given-away locks. Default false. */
+  prizesForSale: boolean
   winnersCount: number
   accessLevel: GiveawayAccessLevel
   entryTasks: EntryTask[]
@@ -94,6 +99,8 @@ export type GiveawayInput = {
   baseEntryTickets: number
   taskIds: string[]
   taskTickets: Record<string, number>
+  /** Admin toggle: when true, prize products are sellable in the store again. */
+  prizesForSale: boolean
 }
 
 // ── Giveaway Entry Types ──
@@ -106,29 +113,43 @@ export interface GiveawayEntry {
   totalTickets: number
 }
 
+/**
+ * Public leaderboard row from `getGiveawayEntries` (L1) — never contains
+ * participant ids or internal task state; `isMe` is computed server-side.
+ */
+export interface GiveawayLeaderboardEntry {
+  telegramUsername: string | null
+  joinedAt: string
+  totalTickets: number
+  isMe: boolean
+}
+
 // ── Task Types (keep existing) ──
+
+export type TaskType = 'custom' | 'join_channel' | 'invite_friend' | 'like_product'
 
 export interface Task {
   id: string
   title: string
-  rewardType: 'coupon' | 'ticket'
-  rewardValue: string
   status: 'active' | 'inactive'
   sortOrder: number
+  /** Link/channel for `custom` (external URL) and `join_channel` (channel id) tasks. */
   actionUrl?: string
-  actionLabel?: string
+  /** How the task is verified when attached to a giveaway (default 'custom' → manual/honor-system). */
+  taskType?: TaskType
+  /** Required count for `invite_friend` (referrals) and `like_product` (likes) tasks. */
+  requiredCount?: number
   createdAt: string | null
   updatedAt: string | null
 }
 
 export type TaskInput = {
   title: string
-  rewardType: 'coupon' | 'ticket'
-  rewardValue: string
   status: 'active' | 'inactive'
   sortOrder: number
   actionUrl?: string
-  actionLabel?: string
+  taskType?: TaskType
+  requiredCount?: number
 }
 
 export type RewardTab = 'giveaways' | 'tasks'

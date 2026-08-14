@@ -10,12 +10,12 @@ export type UseReferralResult = {
   rewardMilestones: RewardMilestone[]
 }
 
-export function useReferral(initData: string): UseReferralResult {
+export function useReferral(initData: string, enabled = true): UseReferralResult {
   const [referralInfo, setReferralInfo] = useState<ReferralInfoResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    if (!initData) return
+    if (!enabled || !initData) return
 
     let isCancelled = false
 
@@ -33,7 +33,7 @@ export function useReferral(initData: string): UseReferralResult {
 
     void load()
     return () => { isCancelled = true }
-  }, [initData])
+  }, [enabled, initData])
 
   const referralLink = buildReferralLink(referralInfo?.referralCode ?? null)
 

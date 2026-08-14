@@ -1,92 +1,71 @@
-import {
-  collection,
-  getDocs,
-  limit,
-  query,
-  where,
-  type QueryDocumentSnapshot,
-  type Timestamp,
-} from 'firebase/firestore'
-
-import { getFirestoreDb } from './firestore'
-import {
-  PROMO_DISCOUNT_TYPES,
-  type AppliedPromo,
-  type PromoCode,
-} from '../../types/promo'
 import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
+import type { AppliedPromo, PromoCode } from '../../types/promo'
 
 const DEFAULT_ADMIN_UPSERT_PROMO_URL = '/api/admin/upsertPromoCode'
 const DEFAULT_ADMIN_DELETE_PROMOS_URL = '/api/admin/deletePromoCodes'
+const DEFAULT_ADMIN_LIST_PROMOS_URL = '/api/admin/listPromoCodes'
+const DEFAULT_VALIDATE_PROMO_URL = '/api/promos/validate'
 
-type PromoCodeDocument = {
-  code: string
-  discountType: PromoCode['discountType']
-  discountValue: number
-  isActive: boolean
-  expiresAt?: Timestamp | null
-  usageLimit?: number | null
-  usageCount?: number
-}
+export type ApplyPromoRejectionReason =
+  | 'promo_not_found'
+  | 'promo_inactive'
+  | 'promo_expired'
+  | 'promo_exhausted'
+  | 'promo_no_discount'
 
-function toPromoCode(snapshot: QueryDocumentSnapshot<PromoCodeDocument>): PromoCode {
-  const data = snapshot.data()
+export type ApplyPromoResult =
+  | { ok: true; promo: AppliedPromo }
+  | { ok: false; reason: ApplyPromoRejectionReason }
 
-  return {
-    id: snapshot.id,
-    code: data.code,
-    discountType: PROMO_DISCOUNT_TYPES.includes(data.discountType)
-      ? data.discountType
-      : 'percentage',
-    discountValue: typeof data.discountValue === 'number' ? data.discountValue : 0,
-    isActive: Boolean(data.isActive),
-    expiresAt: data.expiresAt ? data.expiresAt.toDate() : null,
-    usageLimit: typeof data.usageLimit === 'number' ? data.usageLimit : null,
-    usageCount: typeof data.usageCount === 'number' ? data.usageCount : undefined,
-  }
-}
-
-export async function getPromoCodeByCode(rawCode: string): Promise<PromoCode | null> {
-  const db = getFirestoreDb()
-
-  if (!db) {
-    throw new Error('Firebase is not configured yet.')
-  }
-
+/**
+ * Validates a promo code through the server endpoint (/api/promos/validate).
+ * The promoCodes collection is no longer readable from the client (L9), so
+ * both the apply-preview and the checkout submit are backed by Cloud
+ * Functions. Expected rejections return { ok: false, reason }; transport or
+ * unexpected server failures throw.
+ */
+export async function applyPromoCode(
+  initData: string,
+  rawCode: string,
+  subtotal: number,
+): Promise<ApplyPromoResult> {
   const normalizedCode = rawCode.trim().toUpperCase()
 
   if (!normalizedCode) {
-    return null
+    return { ok: false, reason: 'promo_not_found' }
   }
 
-  const promoQuery = query(
-    collection(db, 'promoCodes'),
-    where('code', '==', normalizedCode),
-    limit(1),
+  const response = await fetchWithTimeout(
+    import.meta.env.VITE_VALIDATE_PROMO_URL || DEFAULT_VALIDATE_PROMO_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ initData, code: normalizedCode, subtotal }),
+    },
   )
 
-  const snapshot = await getDocs(promoQuery)
-  const firstPromo = snapshot.docs[0]
+  const result = (await response.json().catch(() => null)) as
+    | { ok?: boolean; promo?: AppliedPromo; reason?: string }
+    | null
 
-  if (!firstPromo) {
-    return null
+  if (response.ok && result?.ok && result.promo) {
+    return { ok: true, promo: result.promo }
   }
 
-  return toPromoCode(firstPromo as QueryDocumentSnapshot<PromoCodeDocument>)
-}
-
-export async function listPromoCodes(): Promise<PromoCode[]> {
-  const db = getFirestoreDb()
-
-  if (!db) {
-    return []
+  const reason = result?.reason
+  if (
+    reason === 'promo_not_found' ||
+    reason === 'promo_inactive' ||
+    reason === 'promo_expired' ||
+    reason === 'promo_exhausted' ||
+    reason === 'promo_no_discount'
+  ) {
+    return { ok: false, reason }
   }
 
-  const snapshot = await getDocs(collection(db, 'promoCodes'))
-
-  return snapshot.docs.map((item) =>
-    toPromoCode(item as QueryDocumentSnapshot<PromoCodeDocument>),
-  )
+  throw new Error(`${reason ?? `http_${response.status}`}`)
 }
 
 export type CreatePromoCodeInput = {
@@ -230,44 +209,67 @@ export async function deleteInactivePromoCodes(
   }, { maxRetries: 1, shouldRetry: isTransientError })
 }
 
-export function validatePromoCode(
-  promoCode: PromoCode,
+type PromoAdminListItem = {
+  id: string
+  code: string
+  discountType: PromoCode['discountType']
+  discountValue: number
+  isActive: boolean
+  expiresAt: string | null
+  usageLimit: number | null
+  usageCount: number
+}
+
+/**
+ * Lists promo codes for the admin panel via the admin-only endpoint
+ * (/api/admin/listPromoCodes). The collection is not client-readable (L9).
+ */
+export async function listPromoCodes(initData: string): Promise<PromoCode[]> {
+  const response = await fetchWithTimeout(
+    import.meta.env.VITE_ADMIN_LIST_PROMOS_URL || DEFAULT_ADMIN_LIST_PROMOS_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ initData }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`${await readErrorReason(response)}`)
+  }
+
+  const result = (await response.json()) as { promos?: PromoAdminListItem[] }
+
+  return (result.promos ?? []).map((promo) => ({
+    id: promo.id,
+    code: promo.code,
+    discountType: promo.discountType,
+    discountValue: promo.discountValue,
+    isActive: promo.isActive,
+    expiresAt: promo.expiresAt ? new Date(promo.expiresAt) : null,
+    usageLimit: promo.usageLimit,
+    usageCount: promo.usageCount,
+  }))
+}
+
+/**
+ * Pure discount math shared by promo application and checkout submission.
+ * Mirrors the server-side `computePromoDiscount` in functions/src/orders.ts
+ * exactly (same rounding), so a legit checkout always matches what the server
+ * recomputes from the promo document.
+ */
+export function computePromoDiscountAmount(
+  promo: Pick<AppliedPromo, 'discountType' | 'discountValue'>,
   subtotal: number,
-  now = new Date(),
-): AppliedPromo {
-  if (!promoCode.isActive) {
-    throw new Error('This promo code is not active.')
-  }
+): number {
+  if (!Number.isFinite(subtotal) || subtotal <= 0) return 0
 
-  if (promoCode.expiresAt && promoCode.expiresAt.getTime() < now.getTime()) {
-    throw new Error('This promo code has expired.')
-  }
+  const rawDiscount =
+    promo.discountType === 'percentage'
+      ? Number(((subtotal * promo.discountValue) / 100).toFixed(2))
+      : promo.discountValue
 
-  if (promoCode.usageLimit !== null) {
-    const currentUsage = promoCode.usageCount ?? 0
-
-    if (currentUsage >= promoCode.usageLimit) {
-      throw new Error('This promo code has no uses left.')
-    }
-  }
-
-  if (subtotal <= 0) {
-    throw new Error('Add an item before applying a promo code.')
-  }
-
-  const discountAmount =
-    promoCode.discountType === 'percentage'
-      ? Math.min(subtotal, Number(((subtotal * promoCode.discountValue) / 100).toFixed(2)))
-      : Math.min(subtotal, promoCode.discountValue)
-
-  if (discountAmount <= 0) {
-    throw new Error('This promo code does not reduce the order total.')
-  }
-
-  return {
-    code: promoCode.code,
-    discountType: promoCode.discountType,
-    discountValue: promoCode.discountValue,
-    discountAmount,
-  }
+  return Math.min(subtotal, Math.max(0, rawDiscount))
 }

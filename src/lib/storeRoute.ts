@@ -7,7 +7,7 @@ export type StoreScreen =
   | 'checkout'
   | 'success'
   | 'rewards'
-  | 'polls'
+  | 'preferences'
   | 'privacy'
   | 'terms'
   | 'about'
@@ -102,7 +102,8 @@ export function isStoreScreen(value?: string): value is StoreScreen {
     value === 'cart' ||
     value === 'checkout' ||
     value === 'success' ||
-    value === 'rewards' ||    value === 'polls' ||
+    value === 'rewards' ||
+    value === 'preferences' ||
     value === 'privacy' ||
     value === 'terms' ||
     value === 'about'

@@ -18,8 +18,14 @@ import {
   isHelpCommand,
   parseReferralCode,
   processAndCheckRewards,
+  sendTelegramRewardMessage,
+  readGrantedRewardThresholds,
+  extractReferralUserId,
+  isSelfReferralSubscriberDoc,
+  countReferralsExcludingSelf,
   type TelegramWebhookRequest,
 } from './helpers.js'
+import { reapplyTaskToReferencingGiveaways } from './giveaways.js'
 
 export type VerifyTelegramAdminRequest = {
   initData: string
@@ -131,27 +137,6 @@ export type BroadcastAdminResponse = {
     | 'forbidden'
     | 'internal_error'
 }
-
-
-export type SubscribeToNotifyRequest = {
-  initData: string
-  productId: string
-}
-
-export type SubscribeToNotifyResponse = {
-  ok: boolean
-  detail?: string
-  reason:
-    | 'subscribed'
-    | 'unsubscribed'
-    | 'invalid_method'
-    | 'invalid_payload'
-    | 'invalid_init_data'
-    | 'expired_init_data'
-    | 'missing_bot_token'
-    | 'internal_error'
-}
-
 
 export type RewardTier = {
   threshold: number
@@ -784,12 +769,11 @@ export const reorderCampaignsAdmin = onRequest(
 
 export type TaskAdminInput = {
   title: string
-  rewardType: 'coupon' | 'ticket'
-  rewardValue: string
   status: 'active' | 'inactive'
   sortOrder: number
   actionUrl?: string
-  actionLabel?: string
+  taskType?: 'custom' | 'join_channel' | 'invite_friend' | 'like_product'
+  requiredCount?: number
 }
 
 export type UpsertTaskAdminRequest = {
@@ -889,8 +873,6 @@ export const upsertTaskAdmin = onRequest(
     try {
       const payload: Record<string, unknown> = {
         title: task.title.trim(),
-        rewardType: task.rewardType,
-        rewardValue: task.rewardValue.trim(),
         status: task.status,
         sortOrder: task.sortOrder,
         updatedAt: new Date().toISOString(),
@@ -899,29 +881,47 @@ export const upsertTaskAdmin = onRequest(
       if (task.actionUrl?.trim()) {
         payload.actionUrl = task.actionUrl.trim()
       }
-      if (task.actionLabel?.trim()) {
-        payload.actionLabel = task.actionLabel.trim()
+      if (task.taskType) {
+        payload.taskType = task.taskType
       }
+      if (task.requiredCount !== undefined && Number.isInteger(task.requiredCount)) {
+        payload.requiredCount = task.requiredCount
+      }
+
+      let finalTaskId: string
 
       if (taskId) {
         await getFirestore().collection('tasks').doc(taskId).set(payload, { merge: true })
-
-        response.status(200).json({
-          ok: true,
-          taskId,
-          reason: 'saved',
-        } satisfies TaskAdminResponse)
-        return
+        finalTaskId = taskId
+      } else {
+        const createdTask = await getFirestore().collection('tasks').add({
+          ...payload,
+          createdAt: new Date().toISOString(),
+        })
+        finalTaskId = createdTask.id
       }
 
-      const createdTask = await getFirestore().collection('tasks').add({
-        ...payload,
-        createdAt: new Date().toISOString(),
-      })
+      // Propagate the change to every giveaway that references this task so the
+      // buyer UI (type icon, label) and server enforcement reflect it
+      // immediately — no giveaway re-save needed. The task doc is already
+      // committed above, so a propagation failure must never fail the save.
+      try {
+        await reapplyTaskToReferencingGiveaways(getFirestore(), finalTaskId, {
+          title: task.title.trim(),
+          actionUrl: task.actionUrl?.trim(),
+          taskType: task.taskType,
+          requiredCount: task.requiredCount,
+        })
+      } catch (error) {
+        console.error('Task saved but giveaway propagation failed', {
+          taskId: finalTaskId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
 
       response.status(200).json({
         ok: true,
-        taskId: createdTask.id,
+        taskId: finalTaskId,
         reason: 'saved',
       } satisfies TaskAdminResponse)
     } catch (error) {
@@ -1024,199 +1024,6 @@ export const deleteTasksAdmin = onRequest(
 
 // ── Giveaway Admin Functions ──
 
-
-export const subscribeToNotify = onRequest(
-  {
-    cors: true,
-    invoker: 'public',
-    secrets: [telegramBotToken],
-  },
-  async (request, response) => {
-    if (request.method !== 'POST') {
-      response.status(405).json({
-        ok: false,
-        reason: 'invalid_method',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const botToken = telegramBotToken.value()
-
-    if (!botToken) {
-      response.status(500).json({
-        ok: false,
-        reason: 'missing_bot_token',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const body = request.body as Partial<SubscribeToNotifyRequest> | undefined
-    const initData = typeof body?.initData === 'string' ? body.initData : ''
-    const productId = typeof body?.productId === 'string' ? body.productId.trim() : ''
-
-    if (!productId) {
-      response.status(400).json({
-        ok: false,
-        reason: 'invalid_payload',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const verificationResult = verifyTelegramInitData(initData, botToken)
-
-    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
-      response.status(401).json({
-        ok: false,
-        reason:
-          verificationResult.reason === 'expired_init_data'
-            ? 'expired_init_data'
-            : 'invalid_init_data',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const telegramUserId = verificationResult.user.id
-
-    try {
-      const db = getFirestore()
-
-      // Check if the product exists
-      const productSnapshot = await db.collection('products').doc(productId).get()
-      if (!productSnapshot.exists) {
-        response.status(404).json({
-          ok: false,
-          reason: 'invalid_payload',
-        } satisfies SubscribeToNotifyResponse)
-        return
-      }
-
-      // Check if already subscribed
-      const existingSnapshot = await db
-        .collection('productNotifySubscriptions')
-        .where('telegramUserId', '==', telegramUserId)
-        .where('productId', '==', productId)
-        .limit(1)
-        .get()
-
-      if (!existingSnapshot.empty) {
-        // Already subscribed — silently succeed
-        response.status(200).json({
-          ok: true,
-          reason: 'subscribed',
-        } satisfies SubscribeToNotifyResponse)
-        return
-      }
-
-      // Create subscription
-      await db.collection('productNotifySubscriptions').add({
-        telegramUserId,
-        productId,
-        subscribedAt: new Date().toISOString(),
-        notifiedAt: null,
-      })
-
-      response.status(200).json({
-        ok: true,
-        reason: 'subscribed',
-      } satisfies SubscribeToNotifyResponse)
-    } catch (error) {
-      response.status(500).json({
-        ok: false,
-        reason: 'internal_error',
-        detail: error instanceof Error ? error.message : 'Unknown backend error.',
-      } satisfies SubscribeToNotifyResponse)
-    }
-  },
-)
-
-export const unsubscribeFromNotify = onRequest(
-  {
-    cors: true,
-    invoker: 'public',
-    secrets: [telegramBotToken],
-  },
-  async (request, response) => {
-    if (request.method !== 'POST') {
-      response.status(405).json({
-        ok: false,
-        reason: 'invalid_method',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const botToken = telegramBotToken.value()
-
-    if (!botToken) {
-      response.status(500).json({
-        ok: false,
-        reason: 'missing_bot_token',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const body = request.body as Partial<SubscribeToNotifyRequest> | undefined
-    const initData = typeof body?.initData === 'string' ? body.initData : ''
-    const productId = typeof body?.productId === 'string' ? body.productId.trim() : ''
-
-    if (!productId) {
-      response.status(400).json({
-        ok: false,
-        reason: 'invalid_payload',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const verificationResult = verifyTelegramInitData(initData, botToken)
-
-    if (verificationResult.reason !== 'ok' || !verificationResult.user?.id) {
-      response.status(401).json({
-        ok: false,
-        reason:
-          verificationResult.reason === 'expired_init_data'
-            ? 'expired_init_data'
-            : 'invalid_init_data',
-      } satisfies SubscribeToNotifyResponse)
-      return
-    }
-
-    const telegramUserId = verificationResult.user.id
-
-    try {
-      const db = getFirestore()
-
-      // Find subscription
-      const existingSnapshot = await db
-        .collection('productNotifySubscriptions')
-        .where('telegramUserId', '==', telegramUserId)
-        .where('productId', '==', productId)
-        .limit(1)
-        .get()
-
-      if (existingSnapshot.empty) {
-        // Not subscribed — silently succeed
-        response.status(200).json({
-          ok: true,
-          reason: 'unsubscribed',
-        } satisfies SubscribeToNotifyResponse)
-        return
-      }
-
-      // Delete subscription
-      await db.collection('productNotifySubscriptions').doc(existingSnapshot.docs[0].id).delete()
-
-      response.status(200).json({
-        ok: true,
-        reason: 'unsubscribed',
-      } satisfies SubscribeToNotifyResponse)
-    } catch (error) {
-      response.status(500).json({
-        ok: false,
-        reason: 'internal_error',
-        detail: error instanceof Error ? error.message : 'Unknown backend error.',
-      } satisfies SubscribeToNotifyResponse)
-    }
-  },
-)
 
 // ── Broadcast Subscription Functions ──
 
@@ -1326,8 +1133,6 @@ export const toggleBroadcastSubscription = onRequest(
   },
 )
 
-// ── Poll Types ──
-
 // ── Referral types ──
 
 export type ReferralLeaderboardRequest = {
@@ -1354,6 +1159,122 @@ export type ReferralLeaderboardResponse = {
     | 'expired_init_data'
     | 'missing_bot_token'
     | 'internal_error'
+}
+
+export type ReferralLeaderboardComputation = {
+  topReferrers: ReferralLeaderboardEntry[]
+  myRank: number | null
+  myReferralCount: number
+}
+
+// Pure computation over a Firestore instance — extracted from the handler so it
+// can be unit-tested with a mocked Firestore.
+export async function computeReferralLeaderboard(
+  db: FirebaseFirestore.Firestore,
+  myReferralCode: string,
+): Promise<ReferralLeaderboardComputation> {
+  // Get all subscribers that have a referredBy field
+  const subscribersSnapshot = await db
+    .collection('telegramSubscribers')
+    .where('referredBy', '>=', '')
+    .get()
+
+  // Count referrals per referrer code. Self-referrals are skipped (H4): a
+  // subscriber document whose telegramUserId equals the referrer's own id
+  // never counts, even if it exists from before the write-time guard.
+  const referralCounts = new Map<string, number>()
+  for (const doc of subscribersSnapshot.docs) {
+    const data = doc.data()
+    const code = typeof data.referredBy === 'string' ? data.referredBy : ''
+    if (extractReferralUserId(code) === null) continue
+    if (isSelfReferralSubscriberDoc(data)) continue
+    referralCounts.set(code, (referralCounts.get(code) ?? 0) + 1)
+  }
+
+  // Get user ID from referrer codes
+  const referrerIds = Array.from(referralCounts.keys()).map((code) =>
+    Number(code.replace('ref_', '')),
+  )
+
+  // Keep the requesting user's real referral count even if they hid themselves
+  const myReferralCount = referralCounts.get(myReferralCode) ?? 0
+
+  // Drop referrers who opted out of the leaderboard (userSettings.leaderboardShown === false).
+  // The userSettings doc ID is String(telegramUserId); a missing doc means visible (default true).
+  const hiddenReferrerIds = new Set<number>()
+  if (referrerIds.length > 0) {
+    const batchSize = 30
+    for (let i = 0; i < referrerIds.length; i += batchSize) {
+      const batch = referrerIds.slice(i, i + batchSize)
+      const settingsSnapshot = await db.getAll(
+        ...batch.map((uid) => db.collection('userSettings').doc(String(uid))),
+      )
+      for (const doc of settingsSnapshot) {
+        if (!doc.exists) continue
+        if (doc.data()?.leaderboardShown === false) {
+          const uid = Number(doc.id)
+          if (Number.isInteger(uid)) hiddenReferrerIds.add(uid)
+        }
+      }
+    }
+  }
+
+  for (const uid of hiddenReferrerIds) {
+    referralCounts.delete(`ref_${uid}`)
+  }
+
+  // Recompute referrer IDs from the filtered counts so username docs for
+  // hidden users are never fetched
+  const visibleReferrerIds = Array.from(referralCounts.keys()).map((code) =>
+    Number(code.replace('ref_', '')),
+  )
+
+  // Fetch subscriber docs for top referrers to get usernames
+  const referrerDocs = new Map<number, { username: string | null }>()
+  if (visibleReferrerIds.length > 0) {
+    // Batch fetch in groups of 30 (Firestore 'in' limit)
+    const batchSize = 30
+    for (let i = 0; i < visibleReferrerIds.length; i += batchSize) {
+      const batch = visibleReferrerIds.slice(i, i + batchSize)
+      const batchSnapshot = await db
+        .collection('telegramSubscribers')
+        .where('telegramUserId', 'in', batch)
+        .get()
+      for (const doc of batchSnapshot.docs) {
+        const data = doc.data()
+        const uid = typeof data.telegramUserId === 'number' ? data.telegramUserId : null
+        if (uid) {
+          referrerDocs.set(uid, {
+            username: typeof data.username === 'string' ? data.username : null,
+          })
+        }
+      }
+    }
+  }
+
+  // Build leaderboard entries sorted by count desc
+  const topReferrers: ReferralLeaderboardEntry[] = Array.from(referralCounts.entries())
+    .map(([code, count]) => {
+      const uid = Number(code.replace('ref_', ''))
+      const docInfo = referrerDocs.get(uid)
+      return {
+        rank: 0,
+        telegramUserId: uid,
+        username: docInfo?.username ?? null,
+        referralCount: count,
+      }
+    })
+    .sort((a, b) => b.referralCount - a.referralCount)
+    .slice(0, 10)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }))
+
+  // Find the requesting user's rank and count
+  const allSorted = Array.from(referralCounts.entries())
+    .sort(([, a], [, b]) => b - a)
+  const myRankIndex = allSorted.findIndex(([code]) => code === myReferralCode)
+  const myRank = myRankIndex >= 0 ? myRankIndex + 1 : null
+
+  return { topReferrers, myRank, myReferralCount }
 }
 
 export const getReferralLeaderboard = onRequest(
@@ -1410,79 +1331,11 @@ export const getReferralLeaderboard = onRequest(
 
     try {
       const db = getFirestore()
-
-      // Get all subscribers that have a referredBy field
-      const subscribersSnapshot = await db
-        .collection('telegramSubscribers')
-        .where('referredBy', '>=', '')
-        .get()
-
-      // Count referrals per referrer code
-      const referralCounts = new Map<string, number>()
-      for (const doc of subscribersSnapshot.docs) {
-        const data = doc.data()
-        const code = data.referredBy
-        if (typeof code === 'string' && code.startsWith('ref_')) {
-          referralCounts.set(code, (referralCounts.get(code) ?? 0) + 1)
-        }
-      }
-
-      // Get user ID from referrer codes
-      const referrerIds = Array.from(referralCounts.keys()).map((code) =>
-        Number(code.replace('ref_', '')),
-      )
-
-      // Fetch subscriber docs for top referrers to get usernames
-      const referrerDocs = new Map<number, { username: string | null }>()
-      if (referrerIds.length > 0) {
-        // Batch fetch in groups of 30 (Firestore 'in' limit)
-        const batchSize = 30
-        for (let i = 0; i < referrerIds.length; i += batchSize) {
-          const batch = referrerIds.slice(i, i + batchSize)
-          const batchSnapshot = await db
-            .collection('telegramSubscribers')
-            .where('telegramUserId', 'in', batch)
-            .get()
-          for (const doc of batchSnapshot.docs) {
-            const data = doc.data()
-            const uid = typeof data.telegramUserId === 'number' ? data.telegramUserId : null
-            if (uid) {
-              referrerDocs.set(uid, {
-                username: typeof data.username === 'string' ? data.username : null,
-              })
-            }
-          }
-        }
-      }
-
-      // Build leaderboard entries sorted by count desc
-      const entries: ReferralLeaderboardEntry[] = Array.from(referralCounts.entries())
-        .map(([code, count]) => {
-          const uid = Number(code.replace('ref_', ''))
-          const docInfo = referrerDocs.get(uid)
-          return {
-            rank: 0,
-            telegramUserId: uid,
-            username: docInfo?.username ?? null,
-            referralCount: count,
-          }
-        })
-        .sort((a, b) => b.referralCount - a.referralCount)
-        .slice(0, 10)
-        .map((entry, index) => ({ ...entry, rank: index + 1 }))
-
-      // Find the requesting user's rank and count
-      const myReferralCount = referralCounts.get(myReferralCode) ?? 0
-      const allSorted = Array.from(referralCounts.entries())
-        .sort(([, a], [, b]) => b - a)
-      const myRankIndex = allSorted.findIndex(([code]) => code === myReferralCode)
-      const myRank = myRankIndex >= 0 ? myRankIndex + 1 : null
+      const computation = await computeReferralLeaderboard(db, myReferralCode)
 
       response.status(200).json({
         ok: true,
-        topReferrers: entries,
-        myRank,
-        myReferralCount,
+        ...computation,
         reason: 'listed',
       } satisfies ReferralLeaderboardResponse)
     } catch (error) {
@@ -1556,17 +1409,34 @@ export const getReferralInfo = onRequest(
     try {
       const db = getFirestore()
 
-      // Count subscribers where referredBy === this user's referral code
-      const referredSnapshot = await db
-        .collection('telegramSubscribers')
-        .where('referredBy', '==', referralCode)
-        .count()
-        .get()
+      // Count subscribers where referredBy === this user's referral code.
+      // Self-referrals are excluded (H4): opening your own link must never
+      // count toward your own milestones or the early-access threshold.
+      const referralCount = await countReferralsExcludingSelf(db, referralCode)
 
-      const referralCount = referredSnapshot.data().count
+      // Which milestones already had a code before this call? Only NEWLY
+      // granted ones get a bot DM (L5) — the Rewards screen hits this endpoint
+      // on every visit, and re-visiting must never re-send a code.
+      const alreadyGranted = await readGrantedRewardThresholds(db, telegramUserId)
 
       // Check and grant rewards
       const rewardMilestones = await processAndCheckRewards(db, telegramUserId, referralCount)
+
+      // Fire-and-forget DM for freshly granted codes (fail-open): a DM failure
+      // must never fail the referral-info response. Known edge: two concurrent
+      // Rewards-screen opens could both DM the same newly granted code — rare
+      // and cosmetic; the grant itself is still transactionally unique.
+      for (const milestone of rewardMilestones) {
+        if (milestone.granted && !alreadyGranted.has(milestone.threshold)) {
+          void sendTelegramRewardMessage(botToken, telegramUserId, {
+            headline: '🎉 Referral reward!',
+            label: `${milestone.discountPercent}% OFF`,
+            code: milestone.promoCode,
+          }).catch(() => {
+            // Silently ignore — the code is still shown in-app
+          })
+        }
+      }
 
       response.status(200).json({
         ok: true,

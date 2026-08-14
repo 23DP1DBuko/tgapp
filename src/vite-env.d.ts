@@ -15,6 +15,7 @@ interface ImportMetaEnv {
   readonly VITE_DEV_TELEGRAM_USER_ID: string
   readonly VITE_DEV_TELEGRAM_USERNAME: string
   readonly VITE_DEV_TELEGRAM_FIRST_NAME: string
+  readonly VITE_DEV_TELEGRAM_LANGUAGE_CODE: string
   readonly VITE_VERIFY_TELEGRAM_ADMIN_URL: string
   readonly VITE_ADMIN_UPDATE_ORDER_STATUS_URL: string
   readonly VITE_ADMIN_UPSERT_PROMO_URL: string

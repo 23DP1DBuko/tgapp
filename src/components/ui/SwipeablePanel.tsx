@@ -18,6 +18,9 @@ type SwipeablePanelProps = {
  * Wraps any panel with a downward swipe-to-dismiss gesture.
  *
  * - Visual feedback: panel slides down + fades out as you swipe
+ * - The gesture lives on the drag-handle strip at the top only, so content
+ *   inside the panel can scroll vertically and host its own gestures (e.g.
+ *   horizontal cart-row swipes) without the wrapper stealing the pointer.
  * - On dismiss: calls `onDismiss`
  * - Bounces back if you release before the threshold
  * - Respects `reduced-motion` by disabling the gesture
@@ -60,7 +63,7 @@ export function SwipeablePanel({
 
   return (
     <div
-      className={`touch-none ${className}`}
+      className={className}
       style={{
         transform: `translateY(${translateY}px)`,
         opacity,
@@ -68,10 +71,14 @@ export function SwipeablePanel({
           ? 'transform 0.3s ease-out, opacity 0.3s ease-out'
           : 'none',
       }}
-      {...handlers}
     >
-      {/* Drag handle indicator at top */}
-      <div className="mb-2 flex justify-center">
+      {/* Drag handle — the only touch target of the dismiss gesture.
+          touch-none keeps the drag from becoming a page scroll. */}
+      <div
+        {...handlers}
+        className="mb-2 flex touch-none cursor-grab justify-center py-2 active:cursor-grabbing"
+        aria-hidden="true"
+      >
         <div className="h-1 w-8 rounded-full bg-white/20" />
       </div>
       {children}

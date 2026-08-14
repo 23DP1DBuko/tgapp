@@ -15,6 +15,7 @@ import { withRetry, isTransientError, fetchWithTimeout } from '../retry'
 
 const DEFAULT_SEND_BROADCAST_URL = '/api/admin/sendBroadcast'
 const DEFAULT_DELETE_BROADCAST_URL = '/api/admin/deleteBroadcast'
+const DEFAULT_TOGGLE_BROADCAST_URL = '/api/notify/toggleBroadcast'
 
 type BroadcastDocument = {
   createdAt?: Timestamp
@@ -169,4 +170,32 @@ export async function deleteBroadcast(
       )
     }
   }, { maxRetries: 1, shouldRetry: isTransientError })
+}
+
+/**
+ * Buyer opt-in/opt-out for broadcasts.
+ * When `allowBroadcasts` is omitted the endpoint acts as a read-only status check.
+ */
+export async function toggleBroadcastSubscription(
+  initData: string,
+  allowBroadcasts?: boolean,
+): Promise<{ ok: boolean; allowBroadcasts: boolean }> {
+  const response = await fetch(
+    import.meta.env.VITE_TOGGLE_BROADCAST_URL || DEFAULT_TOGGLE_BROADCAST_URL,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData, allowBroadcasts }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to toggle broadcast subscription: http_${response.status}`,
+    )
+  }
+
+  const result = (await response.json()) as { ok: boolean; allowBroadcasts: boolean }
+
+  return result
 }

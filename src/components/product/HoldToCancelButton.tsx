@@ -2,6 +2,8 @@ import { useEffect, useCallback, useRef } from 'react'
 
 import { motion, useMotionValue } from 'motion/react'
 
+import { useI18n } from '../../lib/i18n'
+
 /**
  * HoldToCancelButton
  *
@@ -30,6 +32,7 @@ export function HoldToCancelButton({
   onAdd,
   onRemove,
 }: HoldToCancelButtonProps) {
+  const { t } = useI18n()
   // ── Liquid fill animation via useMotionValue (no re-renders during hold) ──
   const fillPct = useMotionValue(0)
   const rafRef = useRef<number | null>(null)
@@ -134,7 +137,7 @@ export function HoldToCancelButton({
         onClick={handleAdd}
         className="w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] py-4 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98]"
       >
-        ADD TO CART
+        {t('hold.addToCart')}
       </button>
     )
   }
@@ -147,7 +150,7 @@ export function HoldToCancelButton({
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onContextMenu={(e) => e.preventDefault()}
-      className="relative w-full select-none overflow-hidden rounded-2xl bg-[#1C1622] py-4 text-sm font-bold uppercase tracking-[0.2em] text-white transition-shadow active:scale-[0.98]"
+      className="relative w-full select-none overflow-hidden rounded-2xl bg-[var(--shop-panel-solid)] py-4 text-sm font-bold uppercase tracking-[0.2em] text-white transition-shadow active:scale-[0.98]"
       style={{ touchAction: 'manipulation' }}
     >
       {/* ── Liquid fill overlay (rises from bottom) ── */}
@@ -175,7 +178,7 @@ export function HoldToCancelButton({
             <circle cx="14" cy="17" r="1" fill="currentColor" stroke="none" />
           </g>
         </svg>
-        HOLD TO CANCEL
+        {t('hold.holdToCancel')}
       </span>
     </button>
   )

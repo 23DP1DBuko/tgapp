@@ -18,6 +18,13 @@ Dark, moody, nocturnal. The UI feels like a nightclub or underground gallery —
 | `--shop-magenta` | `#d91f6f` | Secondary accent — glow, energy |
 | `--shop-red` | `#ff4d5a` | Destructive actions, errors, urgency |
 | `--shop-cream` | `#fff0f6` | Text on dark surfaces, subtle highlights |
+| `--shop-panel-solid` | `#1c1622` | Solid card/panel surfaces (admin rows, chart cards) |
+| `--shop-dropdown` | `#1a0e1c` | Dropdown menus, settings sheet |
+| `--shop-void` | `#0d050c` | Deepest background (bottom gradients, page backdrop) |
+| `--shop-like` | `#e61e26` | Like/bookmark heart, notification badge |
+| `--shop-accent-purple` | `#a855f7` | Upload dropzone borders + icons |
+| `--shop-emerald` | `#10b981` | Success / revenue green |
+| `--shop-overlay` | `#0f0712` | Image overlay gradient shade (carousels, hero) |
 
 ### Surfaces
 - **Page background:** Deep near-black with two radial-gradient overlays (magenta at top, purple at top-right) on a black-to-deeper-purple linear gradient.

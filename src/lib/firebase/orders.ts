@@ -54,6 +54,23 @@ function toOrder(data: ApiOrder): Order {
   }
 }
 
+/**
+ * Structured checkout error that carries the backend `reason` code so the
+ * client can map it to a localized, actionable message instead of showing
+ * the raw English detail string.
+ */
+export class CreateOrderError extends Error {
+  reason: string
+  detail: string
+
+  constructor(reason: string, detail = '') {
+    super(`Failed to create order: ${reason}${detail ? ` (${detail})` : ''}.`)
+    this.name = 'CreateOrderError'
+    this.reason = reason
+    this.detail = detail
+  }
+}
+
 async function readErrorReason(response: Response): Promise<string> {
   let reason = `http_${response.status}`
   let detail = ''
@@ -84,6 +101,7 @@ export async function createOrder(input: CreateOrderInput): Promise<string> {
         },
         body: JSON.stringify({
           initData: input.initData,
+          clientOrderId: input.clientOrderId,
           fullName: input.fullName,
           telegramHandle: input.telegramHandle,
           telegramUserId: input.telegramUserId ?? null,
@@ -129,9 +147,7 @@ export async function createOrder(input: CreateOrderInput): Promise<string> {
         // Keep the HTTP fallback reason.
       }
 
-      throw new Error(
-        `Failed to create order: ${reason}${detail ? ` (${detail})` : ''}.`,
-      )
+      throw new CreateOrderError(reason, detail)
     }
 
     const result = (await response.json()) as { orderId?: string }

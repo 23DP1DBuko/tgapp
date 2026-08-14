@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { checkIn, fetchCheckinStatus } from '../lib/firebase/dailyCheckin'
+import { translate } from '../lib/i18n/translate'
 
 export type CheckinState = {
   currentStreak: number
@@ -94,18 +95,22 @@ export function useDailyCheckin(initData: string): UseDailyCheckinResult {
         })
 
         if (result.rewardGranted && result.milestoneLabel) {
-          setFeedback(`🔥 ${result.currentStreak}-day streak! You earned ${result.milestoneLabel} — code: ${result.rewardCode}`)
+          setFeedback(translate('checkin.streakReward', {
+            n: result.currentStreak,
+            label: result.milestoneLabel,
+            code: result.rewardCode ?? '',
+          }))
         } else {
-          setFeedback(`Day ${result.currentStreak} streak! Check in again tomorrow.`)
+          setFeedback(translate('checkin.streak', { n: result.currentStreak }))
         }
       } else if (result.reason === 'already_checked_in') {
         setCheckinState((prev) => ({ ...prev, todayCheckedIn: true }))
-        setFeedback('Already checked in today! Come back tomorrow.')
+        setFeedback(translate('checkin.already'))
       } else {
-        setFeedback('Could not check in. Try again.')
+        setFeedback(translate('checkin.failed'))
       }
     } catch {
-      setFeedback('Network error. Try again.')
+      setFeedback(translate('checkin.network'))
     } finally {
       setIsCheckingIn(false)
     }

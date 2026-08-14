@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { listGiveaways } from '../../lib/firebase/giveaways'
-import { toggleBroadcastSubscription } from '../../lib/firebase/notifySubscribers'
-import { toggleLeaderboardVisibility } from '../../lib/firebase/consent'
 import { useReferral } from '../../hooks/useReferral'
 import { fetchReferralLeaderboard } from '../../lib/firebase/referral'
 import type { ReferralLeaderboardEntry } from '../../lib/firebase/referral'
@@ -12,6 +10,9 @@ import { PageHeader } from '../ui/PageHeader'
 import { BuyerGiveawayDetailSheet } from './BuyerGiveawayDetailSheet'
 import { Button } from '../ui/Button'
 import { useDailyCheckin } from '../../hooks/useDailyCheckin'
+import { useI18n } from '../../lib/i18n'
+import { pickPlural } from '../../lib/i18n/translate'
+import type { TranslateFn } from '../../lib/i18n/translations'
 import type { Giveaway } from '../../types/rewards'
 
 type RewardsTasksPanelProps = {
@@ -19,7 +20,6 @@ type RewardsTasksPanelProps = {
   hasTelegramAccess: boolean
   onBack: () => void
   onGiveawayDetailChange?: (isOpen: boolean) => void
-  onOpenPolls?: () => void
 }
 
 const GIVEAWAY_DEFAULT_IMAGE =
@@ -30,7 +30,7 @@ type CountdownDisplay = {
   value: number
 }
 
-function computeCountdown(endsAt: string | null, nowOverride?: number): CountdownDisplay[] | null {
+function computeCountdown(endsAt: string | null, t: TranslateFn, nowOverride?: number): CountdownDisplay[] | null {
   if (!endsAt) return null
 
   const target = new Date(endsAt).getTime()
@@ -45,10 +45,10 @@ function computeCountdown(endsAt: string | null, nowOverride?: number): Countdow
   const seconds = Math.floor((diff / 1000) % 60)
 
   return [
-    { label: 'Days', value: days },
-    { label: 'Hours', value: hours },
-    { label: 'Mins', value: minutes },
-    { label: 'Secs', value: seconds },
+    { label: t('cd.days'), value: days },
+    { label: t('cd.hours'), value: hours },
+    { label: t('cd.mins'), value: minutes },
+    { label: t('cd.secs'), value: seconds },
   ]
 }
 
@@ -57,8 +57,8 @@ export function RewardsTasksPanel({
   hasTelegramAccess,
   onBack,
   onGiveawayDetailChange,
-  onOpenPolls,
 }: RewardsTasksPanelProps) {
+  const { t } = useI18n()
   void hasTelegramAccess
   const { referralInfo, referralLink, rewardMilestones } = useReferral(initData)
   const { checkinState, isCheckingIn, handleCheckIn, feedback: checkinFeedback } = useDailyCheckin(initData)
@@ -71,10 +71,6 @@ export function RewardsTasksPanel({
   const [loading, setLoading] = useState(false)
   const [selectedGiveaway, setSelectedGiveaway] = useState<Giveaway | null>(null)
   const [now, setNow] = useState(Date.now())
-  const [broadcastSubscribed, setBroadcastSubscribed] = useState<boolean | null>(null)
-  const [togglingBroadcast, setTogglingBroadcast] = useState(false)
-  const [leaderboardShown, setLeaderboardShown] = useState<boolean>(true)
-  const [togglingLeaderboard, setTogglingLeaderboard] = useState(false)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -119,53 +115,6 @@ export function RewardsTasksPanel({
     setSelectedGiveaway(null)
     onGiveawayDetailChange?.(false)
   }
-
-  // ── Broadcast subscription: fetch status on mount, toggle on tap ──
-  useEffect(() => {
-    if (!initData) return
-    let cancelled = false
-    async function fetchStatus() {
-      try {
-        const result = await toggleBroadcastSubscription(initData)
-        if (!cancelled) setBroadcastSubscribed(result.allowBroadcasts)
-      } catch {
-        if (!cancelled) setBroadcastSubscribed(true) // sensible default
-      }
-    }
-    void fetchStatus()
-    return () => { cancelled = true }
-  }, [initData])
-
-  const handleToggleBroadcast = useCallback(async () => {
-    if (!initData || togglingBroadcast || broadcastSubscribed === null) return
-    const newValue = !broadcastSubscribed
-    setTogglingBroadcast(true)
-    try {
-      const result = await toggleBroadcastSubscription(initData, newValue)
-      setBroadcastSubscribed(result.allowBroadcasts)
-      triggerHapticFeedback('medium')
-    } catch {
-      // Silently fail – keep current state
-    } finally {
-      setTogglingBroadcast(false)
-    }
-  }, [initData, togglingBroadcast, broadcastSubscribed])
-
-  // ── Leaderboard visibility toggle ──
-  const handleToggleLeaderboard = useCallback(async () => {
-    if (!initData || togglingLeaderboard) return
-    const newValue = !leaderboardShown
-    setTogglingLeaderboard(true)
-    try {
-      const result = await toggleLeaderboardVisibility(initData, newValue)
-      setLeaderboardShown(result.leaderboardShown)
-      triggerHapticFeedback('medium')
-    } catch {
-      // Silently fail — keep current state
-    } finally {
-      setTogglingLeaderboard(false)
-    }
-  }, [initData, togglingLeaderboard, leaderboardShown])
 
   // ── Fetch leaderboard on mount ──
   useEffect(() => {
@@ -216,7 +165,12 @@ export function RewardsTasksPanel({
   const referralCount = referralInfo?.referralCount ?? 0
 
   function formatFomoText(g: Giveaway): string {
-    return `${g.enteredCount} Participant${g.enteredCount !== 1 ? 's' : ''} • ${g.totalTicketsPool} Ticket${g.totalTicketsPool !== 1 ? 's' : ''}`
+    return t('rewards.fomo', {
+      participants: g.enteredCount,
+      participantWord: pickPlural(g.enteredCount, 'gd.participantOne', 'gd.participantFew', 'gd.participantMany'),
+      tickets: g.totalTicketsPool,
+      ticketWord: pickPlural(g.totalTicketsPool, 'gd.ticketOne', 'gd.ticketFew', 'gd.ticketMany'),
+    })
   }
 
   return (
@@ -225,25 +179,50 @@ export function RewardsTasksPanel({
       {/* Back button */}
       <PageHeader label="Catalog" onClick={onBack} />
 
+      {/* ── HOW IT WORKS ── */}
+      <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+        <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
+          {t('rewards.howTitle')}
+        </p>
+        <div className="mt-4 space-y-3">
+          {[
+            { n: 1, text: t('rewards.howStep1') },
+            { n: 2, text: t('rewards.howStep2') },
+            { n: 3, text: t('rewards.howStep3') },
+          ].map((step) => (
+            <div key={step.n} className="flex items-center gap-3">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--shop-purple)]/20 text-[11px] font-bold text-[var(--shop-purple)]">
+                {step.n}
+              </span>
+              <p className="text-sm leading-5 text-[var(--shop-muted)]">{step.text}</p>
+            </div>
+          ))}
+        </div>
+      </article>
+
       {/* ── STACK A: Live Giveaways ── */}
       <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.96),rgba(18,10,24,0.98))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Live Giveaways
+            {t('rewards.liveGiveaways')}
           </p>
           <span className="rounded-full bg-[var(--shop-purple)]/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-purple)]">
-            {activeGiveaways.length > 0 ? activeGiveaways.length === 1 ? '1 Active' : `${activeGiveaways.length} Active` : 'None Running'}
+            {activeGiveaways.length > 0
+              ? activeGiveaways.length === 1
+                ? t('rewards.activeOne')
+                : t('rewards.activeMany', { n: activeGiveaways.length })
+              : t('rewards.noneRunning')}
           </span>
         </div>
 
         {loading ? (
           <p className="mt-4 rounded-2xl bg-white/8 px-4 py-3 text-sm text-[var(--shop-muted)]">
-            Loading giveaways...
+            {t('rewards.loading')}
           </p>
         ) : activeGiveaways.length > 0 ? (
           <div className="mt-4 space-y-5">
             {activeGiveaways.map((g) => {
-              const gCountdown = computeCountdown(g.endAt ?? null, now)
+              const gCountdown = computeCountdown(g.endAt ?? null, t, now)
               return (
                 <div key={g.id} className="rounded-[20px] border border-white/10 bg-black/10 p-4">
                   {/* Giveaway image */}
@@ -263,12 +242,9 @@ export function RewardsTasksPanel({
                       <h3 className="truncate text-base font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
                         {g.title || g.prizes[0]?.productName || 'Giveaway'}
                       </h3>
-                      <p className="mt-0.5 text-xs text-[var(--shop-muted)]">
-                        {g.totalTicketsPool} tickets available
-                      </p>
                     </div>
                     <span className="shrink-0 rounded-full bg-[var(--shop-red)]/18 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-                      Free Entry
+                      {t('rewards.freeEntry')}
                     </span>
                   </div>
 
@@ -297,7 +273,7 @@ export function RewardsTasksPanel({
                     onClick={() => handleOpenGiveawayDetail(g)}
                     className="mt-3 w-full rounded-2xl bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-3.5 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_24px_rgba(139,61,255,0.3)] transition-all active:scale-[0.98]"
                   >
-                    VIEW DETAILS
+                    {t('rewards.viewDetails')}
                   </button>
 
                   {/* FOMO ticker */}
@@ -333,10 +309,10 @@ export function RewardsTasksPanel({
               </svg>
             </div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-zinc-300">
-              No active giveaways right now.
+              {t('rewards.noActive')}
             </p>
             <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-              Complete tasks below to get a ticket when the next one drops.
+              {t('rewards.noActiveBody')}
             </p>
           </div>
         )}
@@ -347,10 +323,10 @@ export function RewardsTasksPanel({
         <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.96),rgba(18,10,24,0.98))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Recent Winners
+              {t('rewards.recentWinners')}
             </p>
             <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
-              Drawn
+              {t('rewards.drawn')}
             </span>
           </div>
 
@@ -390,7 +366,7 @@ export function RewardsTasksPanel({
                       ))}
                       {g.winners!.length > 3 && (
                         <p className="text-[11px] text-[var(--shop-muted)]">
-                          +{g.winners!.length - 3} more
+                          {t('rewards.moreWinners', { n: g.winners!.length - 3 })}
                         </p>
                       )}
                     </div>
@@ -405,7 +381,7 @@ export function RewardsTasksPanel({
       <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.96),rgba(18,10,24,0.98))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Daily Check-In
+            {t('rewards.dailyCheckin')}
           </p>
           <span
             className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${
@@ -414,12 +390,12 @@ export function RewardsTasksPanel({
                 : 'bg-amber-500/15 text-amber-400'
             }`}
           >
-            {checkinState.todayCheckedIn ? 'Checked In' : `${checkinState.currentStreak}-day`}
+            {checkinState.todayCheckedIn ? t('rewards.checkedIn') : t('rewards.dayStreakShort', { n: checkinState.currentStreak })}
           </span>
         </div>
 
         <p className="mt-2 text-xs leading-5 text-zinc-400">
-          Check in daily. Build your streak. Unlock exclusive discounts.
+          {t('rewards.checkinBody')}
         </p>
 
         {/* Streak display */}
@@ -434,7 +410,7 @@ export function RewardsTasksPanel({
               {checkinState.currentStreak}
             </p>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Day Streak
+              {t('rewards.dayStreak')}
             </p>
           </div>
           <div className="text-right">
@@ -442,7 +418,7 @@ export function RewardsTasksPanel({
               {checkinState.totalCheckIns}
             </p>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Total Check-Ins
+              {t('rewards.totalCheckins')}
             </p>
           </div>
         </div>
@@ -451,14 +427,14 @@ export function RewardsTasksPanel({
         {(() => {
           const milestones = [3, 7, 14, 30]
           const nextThreshold = milestones.find((m) => m > checkinState.currentStreak)
-          const label = nextThreshold ? `${nextThreshold} days` : 'All unlocked!'
+          const label = nextThreshold ? t('rewards.days', { n: nextThreshold }) : t('rewards.allUnlocked')
           const pct = nextThreshold
             ? Math.min((checkinState.currentStreak / nextThreshold) * 100, 100)
             : 100
           return (
             <div className="mt-4">
               <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                <span>Next Reward</span>
+                <span>{t('rewards.nextReward')}</span>
                 <span>{label}</span>
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-white/10">
@@ -482,8 +458,8 @@ export function RewardsTasksPanel({
           className="mt-4"
         >
           {checkinState.todayCheckedIn
-            ? `✓ CHECKED IN (Day ${checkinState.currentStreak})`
-            : 'CHECK IN TODAY'}
+            ? t('rewards.checkedInDay', { n: checkinState.currentStreak })
+            : t('rewards.checkInToday')}
         </Button>
 
         {checkinFeedback && (
@@ -495,7 +471,7 @@ export function RewardsTasksPanel({
         {/* Milestone roadmap */}
         <div className="mt-4 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Milestones
+            {t('rewards.milestones')}
           </p>
           {[
             { days: 3, label: '5% OFF' },
@@ -544,19 +520,19 @@ export function RewardsTasksPanel({
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-[var(--shop-cream)]">
-                    {milestone.days}-Day Streak
-                    {unlocked ? ' — Unlocked' : ''}
+                    {t('rewards.daysStreak', { n: milestone.days })}
+                    {unlocked ? t('rewards.unlocked') : ''}
                   </p>
                   <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100">
                     {milestone.label}
                   </p>
                 </div>
                 {unlocked ? (
-                  <span className="shrink-0 rounded-lg bg-emerald-300/20 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100">
-                    ✓ Done
+                  <span className="shrink-0 rounded-lg bg-emerald-300/20 px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-100">
+                    {t('rewards.done')}
                   </span>
                 ) : (
-                  <span className="shrink-0 rounded-lg border border-white/12 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                  <span className="shrink-0 rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
                     {checkinState.currentStreak}/{milestone.days}
                   </span>
                 )}
@@ -570,17 +546,17 @@ export function RewardsTasksPanel({
       <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Your Referral Link
+            {t('rewards.referralLink')}
           </p>
           {referralLink ? (
             <span className="rounded-full bg-emerald-300/12 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-100">
-              {referralCount} {referralCount === 1 ? 'Referral' : 'Referrals'}
+              {referralCount} {referralCount === 1 ? t('rewards.referralOne') : t('rewards.referralMany')}
             </span>
           ) : null}
         </div>
 
         <p className="mt-2 text-xs leading-5 text-zinc-400">
-          Invite friends. Earn store credit and giveaway tickets.
+          {t('rewards.referralBody')}
         </p>
 
         {referralLink ? (
@@ -598,7 +574,7 @@ export function RewardsTasksPanel({
               </svg>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--shop-cream)]">
-                  Your Referral Code
+                  {t('rewards.yourCode')}
                 </p>
                 <p className="mt-0.5 font-mono text-sm font-bold tracking-[-0.02em] text-[var(--shop-purple)]">
                   {referralInfo?.referralCode ?? '...'}
@@ -610,7 +586,7 @@ export function RewardsTasksPanel({
             {rewardMilestones.length > 0 ? (
               <div className="mt-4 space-y-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-                  Unlocked Rewards
+                  {t('rewards.unlockedRewards')}
                 </p>
                 {rewardMilestones.map((milestone) => (
                   <div
@@ -645,13 +621,13 @@ export function RewardsTasksPanel({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold text-[var(--shop-cream)]">
-                        {milestone.threshold} {milestone.threshold === 1 ? 'Referral' : 'Referrals'}
-                        {milestone.granted ? ' — Unlocked' : ''}
+                        {milestone.threshold} {milestone.threshold === 1 ? t('rewards.referralOne') : t('rewards.referralMany')}
+                        {milestone.granted ? t('rewards.unlocked') : ''}
                       </p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100">
                         {milestone.granted
-                          ? `CODE: ${milestone.promoCode}`
-                          : `${milestone.discountPercent}% OFF`}
+                          ? t('rewards.code', { code: milestone.promoCode ?? '' })
+                          : t('rewards.off', { n: milestone.discountPercent })}
                       </p>
                     </div>
                     {milestone.granted ? (
@@ -668,13 +644,13 @@ export function RewardsTasksPanel({
                             // Clipboard write failed silently
                           }
                         }}
-                        className="shrink-0 rounded-lg bg-emerald-300/20 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100"
+                        className="shrink-0 rounded-lg bg-emerald-300/20 px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-100"
                       >
-                        {copiedMilestoneCode === milestone.promoCode ? 'COPIED!' : 'Copy Code'}
+                        {copiedMilestoneCode === milestone.promoCode ? t('rewards.copied') : t('rewards.copyCode')}
                       </button>
                     ) : (
-                      <span className="shrink-0 rounded-lg border border-white/12 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                        Locked
+                      <span className="shrink-0 rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                        {t('rewards.locked')}
                       </span>
                     )}
                   </div>
@@ -690,7 +666,7 @@ export function RewardsTasksPanel({
               fullWidth
               className="mt-3"
             >
-              {copiedReferral ? '✓ COPIED!' : 'COPY REFERRAL LINK'}
+              {copiedReferral ? t('rewards.copiedLink') : t('rewards.copyLink')}
             </Button>
 
             {/* Referral count card */}
@@ -700,7 +676,7 @@ export function RewardsTasksPanel({
                   {referralCount}
                 </p>
                 <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                  Referrals
+                  {t('rewards.referralMany')}
                 </p>
               </div>
               <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-center">
@@ -708,38 +684,11 @@ export function RewardsTasksPanel({
                   {referralCount >= 3 ? '3+' : `${referralCount} / 3`}
                 </p>
                 <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                  Next Milestone
+                  {t('rewards.nextMilestone')}
                 </p>
               </div>
             </div>
 
-            {/* Leaderboard visibility toggle */}
-            <div className="mt-5 flex items-center justify-between rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-[var(--shop-cream)]">
-                  Show in Leaderboard
-                </p>
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                  {leaderboardShown ? 'Your username is public' : 'Only visible to you'}
-                </p>
-              </div>                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={leaderboardShown}
-                  aria-label="Toggle leaderboard visibility"
-                  onClick={handleToggleLeaderboard}
-                  disabled={togglingLeaderboard}
-                  className={`relative h-7 w-12 shrink-0 rounded-full transition-all duration-200 disabled:opacity-40 ${
-                    leaderboardShown ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
-                  }`}
-                >
-                <span
-                  className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform duration-200 ${
-                    leaderboardShown ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-white/8 px-6 py-12 text-center">
@@ -750,7 +699,7 @@ export function RewardsTasksPanel({
               </svg>
             </div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-zinc-300">
-              Open the app in Telegram to generate your link.
+              {t('rewards.needTelegram')}
             </p>
           </div>
         )}
@@ -760,15 +709,19 @@ export function RewardsTasksPanel({
       <article className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(28,14,34,0.96),rgba(18,10,24,0.98))] p-5 shadow-[0_25px_70px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Top Referrers
+            {t('rewards.topReferrers')}
           </p>
           <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
-            {leaderboardEntries.length > 0 ? `${leaderboardEntries.length} Leader${leaderboardEntries.length === 1 ? '' : 's'}` : 'Ranking'}
+            {leaderboardEntries.length > 0
+              ? leaderboardEntries.length === 1
+                ? t('rewards.leaderOne')
+                : t('rewards.leaderMany')
+              : t('rewards.ranking')}
           </span>
         </div>
 
         <p className="mt-2 text-xs leading-5 text-zinc-400">
-          The most influential community members. Invite friends to climb the ranks.
+          {t('rewards.leaderboardBody')}
         </p>
 
         {leaderboardLoading ? (
@@ -799,19 +752,19 @@ export function RewardsTasksPanel({
                       : `User #${entry.telegramUserId}`}
                     {isMe && (
                       <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--shop-purple)]">
-                        You
+                        {t('rewards.you')}
                       </span>
                     )}
                   </span>
                   <span className="shrink-0 text-xs font-semibold text-[var(--shop-muted)]">
-                    {entry.referralCount} {entry.referralCount === 1 ? 'ref' : 'refs'}
+                    {entry.referralCount} {entry.referralCount === 1 ? t('rewards.refShort') : t('rewards.refsShort')}
                   </span>
                 </div>
               )
             })}
             {myLeaderboardRank !== null && !leaderboardEntries.some((e) => e.telegramUserId === referralInfo?.telegramUserId) && (
               <div className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                Your rank: #{myLeaderboardRank} ({referralCount} referrals)
+                {t('rewards.yourRank', { rank: myLeaderboardRank ?? 0, n: referralCount })}
               </div>
             )}
           </div>
@@ -828,120 +781,16 @@ export function RewardsTasksPanel({
               </svg>
             </div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-zinc-300">
-              No referrers yet.
+              {t('rewards.noReferrers')}
             </p>
             <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-              Share your referral link to start climbing the ranks.
+              {t('rewards.noReferrersBody')}
             </p>
           </div>
         )}
       </article>
 
-      {/* ── STACK D: Broadcast Subscription ── */}
-      <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-            Broadcast Messages
-          </p>
-          <span
-            className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] ${
-              broadcastSubscribed === null
-                ? 'bg-white/8 text-[var(--shop-muted)]'
-                : broadcastSubscribed
-                  ? 'bg-emerald-300/15 text-emerald-100'
-                  : 'bg-white/8 text-[var(--shop-muted)]'
-            }`}
-          >
-            {broadcastSubscribed === null
-              ? '—'
-              : broadcastSubscribed
-                ? 'Subscribed'
-                : 'Unsubscribed'}
-          </span>
-        </div>
-
-        <p className="mt-2 text-xs leading-5 text-zinc-400">
-          Get notified when new drops arrive, giveaways go live, or exclusive offers drop. You can toggle this anytime.
-        </p>
-
-        <div className="mt-4 flex items-center justify-between rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-              broadcastSubscribed
-                ? 'bg-[var(--shop-purple)]/20 text-[var(--shop-purple)]'
-                : 'border border-white/10 bg-white/8 text-[var(--shop-muted)]'
-            }`}>
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 shrink-0" aria-hidden="true">
-                <g transform="translate(2, 2)">
-                  <path
-                    fillRule="evenodd"
-                    d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z"
-                    clipRule="evenodd"
-                  />
-                </g>
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-[var(--shop-cream)]">
-                {broadcastSubscribed === null
-                  ? 'Loading...'
-                  : broadcastSubscribed
-                    ? 'You receive broadcasts'
-                    : 'Broadcasts are off'}
-              </p>
-              <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                {broadcastSubscribed === null
-                  ? 'Check your status'
-                  : broadcastSubscribed
-                    ? 'Toggle to unsubscribe'
-                    : 'Toggle to receive updates'}
-              </p>
-            </div>
-          </div>            <button
-              type="button"
-              role="switch"
-              aria-checked={broadcastSubscribed === true}
-              aria-label="Toggle broadcast notifications"
-              onClick={handleToggleBroadcast}
-              disabled={togglingBroadcast || broadcastSubscribed === null}
-              className={`relative h-7 w-12 shrink-0 rounded-full transition-all duration-200 disabled:opacity-40 ${
-                broadcastSubscribed ? 'bg-[var(--shop-purple)]' : 'bg-white/15'
-              }`}
-            >
-            <span
-              className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform duration-200 ${
-                broadcastSubscribed ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
-      </article>    </div>
-
-      {/* ── STACK E: Community Polls (entry point) ── */}
-      {onOpenPolls && (
-        <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Community Polls
-            </p>
-            <span className="rounded-full bg-[var(--shop-purple)]/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-purple)]">
-              Vote Now
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-zinc-400">
-            Vote on what we should drop next. Shape the future of the collection.
-          </p>
-          <Button
-            onClick={() => onOpenPolls?.()}
-            variant="primary"
-            size="lg"
-            fullWidth
-            className="mt-4"
-          >
-            View Active Polls
-          </Button>
-        </article>
-      )}
+    </div>
 
       {/* ── GIVEAWAY DETAIL SHEET ── */}
       <BuyerGiveawayDetailSheet

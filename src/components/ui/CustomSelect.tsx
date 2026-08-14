@@ -32,11 +32,6 @@ export function CustomSelect({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Close when an option is selected
-  useEffect(() => {
-    setIsOpen(false)
-  }, [value])
-
   const selectedLabel = options.find((o) => o.value === value)?.label ?? ''
 
   return (
@@ -66,12 +61,15 @@ export function CustomSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+        <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[var(--shop-dropdown)] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
           {options.map((opt) => (
             <button
               key={opt.value}
               type="button"
-              onClick={() => onChange(opt.value)}
+              onClick={() => {
+                onChange(opt.value)
+                setIsOpen(false)
+              }}
               className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-white/8 ${
                 value === opt.value
                   ? 'bg-white/10 text-[var(--shop-cream)]'

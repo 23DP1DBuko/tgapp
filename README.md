@@ -1,228 +1,214 @@
-# Telegram Mini App Storefront
+# YungWear — Telegram Mini App Storefront
 
-A mobile-first **Telegram Mini App** for a small streetwear store focused on limited drops, one-of-one items, and community-driven sales.
+A mobile-first **Telegram Mini App** for **YungWear**, a small streetwear store focused on limited drops, one-of-one items, and community-driven sales. Buyers browse and check out inside Telegram; the admin runs the whole store (products, orders, promos, giveaways, broadcasts) from the same app.
 
-This project is built for a lightweight storefront experience inside Telegram, with Firebase used for application data, auth-related flows, and storage-backed product media.
-
----
-
-## Product
-
-This app is designed for:
-- limited streetwear drops
-- small curated catalogs
-- Telegram-native browsing and checkout
-- manual admin control
-- simple and understandable architecture
-
-The goal is not to build a giant marketplace.
-The goal is to provide a focused storefront for a small brand or community.
+The app is designed to be small, controlled, and community-focused — not a giant marketplace. Firebase (Firestore, Storage, Cloud Functions, Hosting) powers the backend, and Telegram is the platform.
 
 ---
 
-## Core capabilities
+## Features
 
-The app may include the following implemented product areas:
+### Storefront (buyers)
 
-- product catalog
-- category filtering
-- product detail pages
-- multiple product images
-- cart state
-- promo code validation
-- checkout flow
-- Firestore order creation
-- order status management
-- wishlist
-- admin panel
-- product CRUD
-- Firebase Storage image upload
-- Telegram WebApp integration
-- Telegram init data handling and server-side verification
+- **Preferences page** (settings menu) — broadcast subscription toggle, language selector (English / Русский / Latviešu, full storefront UI translation), reduced-motion override
+- **Product catalog** with category filtering, search, sorting, and grid/list collection views
+- **Product detail pages** with multiple images, likes, and a pinned Add-to-cart button
+- **Quick view sheet** for fast browsing
+- **Cart** — client-side, persisted per Telegram user, with unavailable-item detection
+- **Promo codes** — percentage or fixed-amount discounts, validated at checkout
+- **Checkout** — delivery or meetup fulfillment, payment via meetup cash or USDT; capture-first, admin fulfills manually
+- **Order history** for buyers with status tracking (new → paid → completed, etc.)
+- **Likes / wishlist** with unread-like badge
+- **Daily check-in** with streak tracking
+- **Giveaways** — task-based ticket entries, winner drawing
+- **Broadcast opt-in** — subscribe to drop announcements via the Telegram bot (Preferences / Rewards)
+- **Upcoming / early-access** product windows
+- **Referrals** with tracking and leaderboard
+- **Campaign hero carousel** on the home page
+- **Online presence** indicator (live user count)
+- **GDPR consent flow** — consent screen, privacy policy, terms of service, about page, consent withdrawal
+- **Offline detection** banner, error boundaries, retry logic
 
-Project documentation should be kept aligned with the actual codebase.
-If code and docs disagree, trust the code first.
+### Admin panel (verified admins only)
+
+Opened via triple-tap from the storefront; protected by server-side Telegram admin verification.
+
+- **Dashboard** — analytics, product stats
+- **Catalog** — product CRUD with Firebase Storage image upload, promo code management
+- **Growth** — campaign management, broadcast messages (sent via the Telegram bot)
+- **Orders** — list, filter, update status, cancel with reason
+- **Rewards** — giveaways, reward tasks, winner drawing
 
 ---
 
 ## Stack
 
-Frontend:
-- React 19
-- TypeScript
-- Vite
-- Tailwind CSS v4
-- ESLint
+**Frontend**
+- React 19 + TypeScript
+- Vite (manual chunk splitting for firebase, react, motion, recharts, icons)
+- Tailwind CSS v4 (via `@tailwindcss/vite`)
+- `motion` (animations), `recharts` (admin analytics charts), `lucide-react` + inline Heroicons SVGs (icons)
+- ESLint 9
 
-Backend and platform:
-- Firebase Auth
-- Cloud Firestore
-- Firebase Storage
-- Firebase-backed verification / server-side logic where needed
-
-Integration:
-- Telegram Mini App / Telegram WebApp SDK
-
----
-
-## Development
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Run the dev server:
-
-```bash
-npm run dev
-```
-
-Build for production:
-
-```bash
-npm run build
-```
-
-Lint the codebase:
-
-```bash
-npm run lint
-```
-
----
-
-## Environment
-
-This project uses environment variables for Firebase and related configuration.
-
-Typical setup includes:
-- Firebase project credentials
-- Telegram-related configuration if required by server-side verification
-- any admin or deployment-specific variables used by the current codebase
-
-Keep secrets out of version control.
-Use a local `.env` file and provide an `.env.example` when onboarding other developers.
+**Backend / platform**
+- Firebase SDK (`firebase` v12) — Firestore, Storage, Hosting
+- Cloud Functions (`firebase-functions` v6, `firebase-admin` v13, Node 22) — all privileged operations
+- Telegram Mini App / WebApp SDK (client) + Telegram Bot API (server-side webhook)
 
 ---
 
 ## Project structure
 
-The exact structure may evolve, but the project is expected to stay close to this shape:
-
 ```text
 src/
-  app/
-    router/
-    providers/
-  components/
-    ui/
-    layout/
-    product/
-    cart/
-    admin/
-  features/
-    auth/
-    products/
-    cart/
-    promo/
-    checkout/
-    wishlist/
-    notifications/
-    admin/
-  hooks/
-  lib/
-    firebase/
-    telegram/
-    utils/
+  App.tsx                      # Root: error boundary, add-to-cart animation provider
+  main.tsx                     # React entry
+  index.css                    # Design tokens, keyframes, global styles
   pages/
-  styles/
-  types/
+    HomePage.tsx               # Single-page app: navigation, consent, checkout, admin mount
+  components/
+    ui/        # Button, Input, BottomSheet, SwipeablePanel, CustomSelect, PageHeader,
+               # SkeletonCard, NotificationBanner, OfflineBanner, TaskActionButton,
+               # ErrorBoundary, CountUp
+    layout/    # AppShell (bottom nav, online count)
+    product/   # StoreCatalogPanel, ProductDetailPanel, QuickViewSheet, ProductAdminPanel,
+               # HoldToCancelButton
+    cart/      # CartPanel, CheckoutPanel
+    order/     # BuyerOrderDrawer, BuyerOrdersPanel, OrderAdminPanel
+    promo/     # PromoAdminPanel
+    admin/     # AdminDashboard (+5 tabs), AdminDashboardPanel, AdminStatusPanel
+    broadcast/ # BroadcastAdminPanel
+    campaign/  # CampaignAdminPanel
+    rewards/   # RewardsAdminPanel, RewardsTasksPanel, BuyerGiveawayDetailSheet,
+               # ProductPickerModal
+    store/     # StoreControlsPanel
+    legal/     # ConsentScreen, PrivacyPolicy, TermsOfService, AboutPage
+  hooks/       # useCart, useCheckout, useLikes, usePromo, useProducts, useDailyCheckin,
+               # useReferral, useOnlineUsers, useStoreNavigation, useProductFiltering,
+               # useNetworkStatus, useSwipeToDismiss, useTelegramBackButton, useReducedMotion,
+               # useAddToCartAnimation, ...
+  lib/
+    firebase/  # config, products, orders, promoCodes, campaigns, broadcasts,
+               # giveaways, tasks, dailyCheckin, referral, consent, presence,
+               # analytics, storage, firestore
+    telegram/  # webApp.ts (init + dev fallback + haptics), admin.ts (access verification)
+    storage.ts # local/session persistence helpers
+    storeRoute.ts  # hash-based routing: #/store/... and #/admin/...
+    orderStatus.ts, retry.ts, viewTransition.ts, earlyAccess.ts
+  types/       # product, cart, order, promo, campaign, broadcast, rewards, legal
+functions/
+  src/         # Cloud Functions (TS): index, helpers, products, orders, promoCodes,
+               # content, giveaways, checkin, consent, presence
 ```
 
-Guiding principles:
-- keep reusable UI isolated
-- keep feature logic grouped by domain
-- keep Firebase logic inside dedicated modules
-- keep Telegram-specific code centralized
-- avoid unnecessary abstractions
+### Routing
+
+The app is a single page using **hash-based routing**:
+
+- `#/store/catalog`, `#/store/product/<id>`, `#/store/cart`, `#/store/checkout/<step>`, `#/store/orders`, `#/store/likes`, `#/store/rewards`, plus legal screens (`privacy`, `terms`, `about`)
+- `#/admin/<dashboard|catalog|growth|orders|rewards>`
+
+Browser back/forward works through a `hashchange` listener that restores view state.
 
 ---
 
-## Firebase data
+## Development
 
-The project uses Firestore-backed product, promo, and order data.
+```bash
+npm install        # install frontend deps
+npm run dev        # start Vite dev server
+npm run build      # typecheck (tsc -b) + production build
+npm run lint       # ESLint
+npm run preview    # preview the production build
+```
 
-See:
-- `FIREBASE_SCHEMA.md` for collection shapes and examples
-- security-related docs for rules and verification details if present
+Cloud Functions live in `functions/`:
 
-Typical domains include:
-- `products`
-- `orders`
-- `promoCodes`
-- optional categories, subscriptions, wishlist, and admin-related data
+```bash
+cd functions
+npm install
+npm run build      # tsc compile to lib/
+```
+
+The app works in a regular browser during development via a fallback in `src/lib/telegram/webApp.ts` — no Telegram required. A dev-mock mode (`VITE_ENABLE_ADMIN_IN_BROWSER=true` on localhost) unlocks the admin panel locally.
+
+---
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in values. All Firebase credentials are read from `VITE_FIREBASE_*` variables — never hardcoded.
+
+| Variable | Purpose |
+|---|---|
+| `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID` | Firebase project config |
+| `VITE_TELEGRAM_ADMIN_IDS` | Telegram user IDs allowed to manage the store |
+| `VITE_TELEGRAM_BOT_USERNAME`, `VITE_TELEGRAM_BOT_START`, `VITE_TELEGRAM_BOT_STARTAPP` | Bot link used to open the Mini App |
+| `VITE_ENABLE_ADMIN_IN_BROWSER` | Dev-only browser admin fallback (localhost only) |
+| `VITE_VERIFY_TELEGRAM_ADMIN_URL` | Deployed endpoint for admin verification |
+
+Most Cloud Function endpoints have an optional `VITE_*_URL` override (checkout, orders, promos, products, campaigns, giveaways, tasks, broadcasts, notifications, referrals, consent, settings, uploads, analytics). Defaults point to the Firebase Hosting rewrites below.
+
+Keep secrets out of version control — `.env` is gitignored.
+
+---
+
+## Firebase architecture
+
+### Firestore collections
+
+| Collection | Access |
+|---|---|
+| `products`, `campaigns`, `giveaways`, `tasks`, `bannerSlides`, `broadcasts` | Public read, client write denied (writes via Functions) |
+| `orders`, `promoCodes`, `telegramSubscribers`, `userRewards`, `userConsent`, `userSettings`, `presence` | Client read/write denied — Functions only |
+
+Full document shapes live in [`FIREBASE_SCHEMA.md`](./FIREBASE_SCHEMA.md) and `firestore.rules` / `storage.rules`.
+
+### Cloud Functions (exposed via Hosting rewrites)
+
+- **Auth/admin**: `verifyTelegramAdmin`
+- **Checkout**: `createCheckoutOrder` (atomic promo usage + status/owner server-enforced)
+- **Orders**: `listBuyerOrders`, `listOrdersAdmin`, `updateOrderStatusAdmin`
+- **Catalog**: `upsertProductAdmin`, `deleteProductsAdmin`, `uploadProductImageAdmin`, `deleteProductImagesAdmin`, `upsertPromoCodeAdmin`, `deletePromoCodesAdmin`, `updateProductSignal`
+- **Engagement**: `broadcastMessageAdmin`, `sendBroadcast` via bot, `upsertCampaignAdmin`, `deleteCampaignsAdmin`, `reorderCampaignsAdmin`, `uploadBannerImageAdmin`, `upsertGiveawayAdmin`, `deleteGiveawaysAdmin`, `drawGiveawayAdmin`, `joinGiveaway`, `completeGiveawayTask`, `getGiveawayEntries`, `getMyGiveawayEntry`, `upsertTaskAdmin`, `deleteTasksAdmin`, `uploadGiveawayImageAdmin`
+- **Rewards/retention**: `dailyCheckin`, `getCheckinStatus`, `getReferralInfo`, `getReferralLeaderboard`
+- **Notify**: `toggleBroadcastSubscription` (buyer broadcast opt-in)
+- **Telegram**: `telegramBotWebhook` (subscriber registry, broadcasts)
+- **Legal**: `acceptTermsHandler`, `updateUserSettingsHandler`
+- **Admin**: `getAdminAnalytics`
 
 ---
 
 ## Telegram integration
 
-This app is intended to work inside Telegram, but development should also support safe browser fallback behavior.
-
-Telegram-related implementation should:
-- initialize the Telegram WebApp safely
-- avoid scattering `window.Telegram` access everywhere
-- separate client helpers from verification logic
-- avoid trusting client-side Telegram identity for privileged actions without server-side verification
-
----
-
-## Admin and operations
-
-The project includes or is expected to include admin-oriented flows such as:
-- product creation and editing
-- product availability management
-- image upload
-- order review and status updates
-- promo management
-
-Admin behavior should remain simple, explicit, and easy to debug.
+- `src/lib/telegram/webApp.ts` centralizes `window.Telegram.WebApp` access (init, viewport, theme, haptics) with a safe browser fallback
+- Native Telegram back button is wired via `useTelegramBackButton`
+- Buyers are identified by Telegram `initData`; privileged actions (admin, checkout) are verified **server-side** via HMAC-SHA256 (`verifyTelegramAdmin`, etc.)
+- Vertical swipe-to-close is disabled inside the Mini App; image context menus are suppressed
 
 ---
 
 ## Documentation
 
-Important docs in this repository may include:
-
-- `AGENTS.md` — guidance for the coding agent
-- `TODO.md` — current roadmap
-- `PROJECT_STRUCTURE.md` — folder and architecture notes
-- `FIREBASE_SCHEMA.md` — Firestore data shapes
-- `UI_GUIDELINES.md` — shared styling and component conventions
-- `SECURITY_PLAN.md` — auth, rules, and verification guidance
-
-If documentation becomes outdated, update it to match the current implementation.
+- [`AGENTS.md`](./AGENTS.md) — working rules for coding agents
+- [`PRODUCT.md`](./PRODUCT.md) — product context, positioning, principles
+- [`DESIGN.md`](./DESIGN.md) — design system (tokens, typography, motion, components)
+- [`FIREBASE_SCHEMA.md`](./FIREBASE_SCHEMA.md) — Firestore collection shapes and rules summary
+- [`SECURITY_PLAN.md`](./SECURITY_PLAN.md) — architecture and verification model
+- [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) — pre-release security/a11y checklist
+- `yungwear_*_roadmap.md` / `yungwear_*_structure.md` — historical planning docs; **may be outdated** — trust the code
 
 ---
 
 ## Security & Compliance
 
-Key security, privacy, and compliance documents:
-
-- [`SECURITY_PLAN.md`](./SECURITY_PLAN.md) — Architecture, verification model, and implementation phases for securing the app
-- [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) — **Pre-release human checklist** for security, accessibility, IP, and privacy review
-- [`FIREBASE_SCHEMA.md`](./FIREBASE_SCHEMA.md) — Firestore collection shapes and security rule summaries
-- [`firestore.rules`](./firestore.rules) — Firestore security rule definitions
-- [`storage.rules`](./storage.rules) — Cloud Storage security rule definitions
-
 Key security practices:
+
 - All Firebase config values are read from environment variables (`VITE_FIREBASE_*`), never hardcoded
 - Telegram `initData` is verified server-side via HMAC-SHA256
-- All secrets (bot tokens, API keys) are managed via environment variables or Firebase Secrets, never committed to the repository
+- All secrets (bot tokens, API keys) are managed via environment variables or Firebase Secrets, never committed
 - `.env` is in `.gitignore`
-- Sensitive Firestore collections (`orders`, `userRewards`, `pollVotes`, `telegramSubscribers`, `userConsent`, `userSettings`, `presence`) have client read/write denied
-- Admin operations are performed through Cloud Functions with backend-verified admin identity
+- Sensitive Firestore collections have client read/write denied; admin operations go through Cloud Functions with backend-verified identity
+- Promo validation and usage counting happen atomically in a server-side checkout transaction
 
 ### Pre-release checklist
 
@@ -244,13 +230,12 @@ Before every public release, run through the checklist in [`SECURITY_REVIEW.md`]
 - SVG icons are inline in the source code — no external icon CDN dependencies
 
 ### Fonts
-- The app uses the system font stack — no custom fonts are loaded
-- Font stack: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif
+- The app uses a system font stack (Trebuchet MS / Segoe UI / system-ui) — no custom fonts loaded
 
 ### Images
-- All product images are original photos of the seller's personal items
+- Product images are original photos of the seller's personal items
 - Campaign/giveaway images are uploaded by the admin via the admin panel
-- No placeholder images from free stock photo services (Unsplash, Pexels, etc.) are used in production code
+- No placeholder images from free stock photo services are used in production code
 
 ### Text content
 - All product descriptions, campaign text, and UI copy are written for this project
@@ -258,25 +243,26 @@ Before every public release, run through the checklist in [`SECURITY_REVIEW.md`]
 
 ### Third-party services
 - **Firebase** (Google Cloud) — data processor for user data. See [Google Cloud DPA](https://cloud.google.com/terms/data-processing-addendum)
-- **Telegram** — platform provider. The app runs inside Telegram Mini App environment
+- **Telegram** — platform provider. The app runs inside the Telegram Mini App environment
 
 ---
 
 ## Accessibility (a11y)
 
-The app is built with mobile-first, accessible design:
-- All interactive elements use native `<button>` and `<a>` elements or have proper `role`, `tabIndex`, and keyboard handlers
-- Modal panels close on `Escape` key press
-- All meaningful images have descriptive `alt` text
-- The app respects `prefers-reduced-motion`
-- Color contrast meets WCAG AA standards where possible
+The app is built mobile-first with accessibility in mind:
+- Interactive elements use native `<button>`/`<a>` or proper `role`, `tabIndex`, and keyboard handlers
+- Modal panels close on `Escape`; bottom sheets support drag-to-dismiss
+- Meaningful images have descriptive `alt` text
+- The app respects `prefers-reduced-motion` (all animation collapses)
+- Color contrast targets WCAG 2.1 AA; touch targets aim for 44×44px
+- Error states use both color and text, never color alone
 
 ### Accessibility testing
 Before release:
 1. Run **Lighthouse** on all main pages — target: no critical/serious violations
 2. Run **axe DevTools** browser extension on the same pages
 3. Manually test with keyboard navigation (Tab, Enter, Escape)
-4. Test with screen reader (VoiceOver / NVDA)
+4. Test with a screen reader (VoiceOver / NVDA)
 
 ---
 
@@ -286,9 +272,7 @@ When contributing:
 - inspect the existing code first
 - make small, understandable changes
 - do not rewrite working systems without a clear reason
-- verify each change manually
+- verify each change manually (`npm run build`, `npm run lint`)
 - prefer clarity over cleverness
-- keep the UI consistent
-- keep security-sensitive flows explicit
-
-This repository is meant to stay maintainable and educational while the product evolves.
+- keep the UI consistent with `DESIGN.md`
+- keep security-sensitive flows explicit and server-verified

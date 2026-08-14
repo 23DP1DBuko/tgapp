@@ -18,6 +18,9 @@ export type Product = {
   brandNames: string[]
   price: number
   currency: 'EUR'
+  /** Optional sale: 'percentage' or 'fixed' amount off `price`. */
+  discountType?: 'percentage' | 'fixed' | null
+  discountValue?: number | null
   isAvailable: boolean
   likesCount: number
   cartCount: number
@@ -27,6 +30,4 @@ export type Product = {
   upcoming?: boolean
   earlyAccessAt?: Timestamp | null
   publicAt?: Timestamp | null
-  reservedBy?: number | null
-  reservedUntil?: Timestamp | null
 }

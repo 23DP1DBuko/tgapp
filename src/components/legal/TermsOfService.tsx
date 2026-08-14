@@ -1,4 +1,7 @@
 import { Button } from '../ui/Button'
+import { useI18n } from '../../lib/i18n'
+import { tLocale } from '../../lib/i18n/locale'
+import { LegalDocBody } from './LegalDocBody'
 
 type TermsOfServiceProps = {
   onBack: () => void
@@ -12,6 +15,7 @@ type TermsOfServiceProps = {
  * being used in production. See LEGAL_TODO.md for details.
  */
 export function TermsOfService({ onBack }: TermsOfServiceProps) {
+  const { t, language } = useI18n()
   return (
     <div className="overflow-y-auto touch-pan-y max-h-dvh pb-24 [scrollbar-width:none]">
       <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
@@ -19,209 +23,33 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Legal
+              {t('legal.kicker')}
             </p>
             <h2 className="mt-1 text-2xl font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
-              Terms of Service
+              {t('legal.termsTitle')}
             </h2>
           </div>
           <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-400">
-            Draft — v1.0
+            {t('legal.draft')}
           </span>
         </div>
 
         <div className="space-y-5 text-sm leading-6 text-zinc-300">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-            Last updated: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+            {t('legal.lastUpdated', { date: new Date().toLocaleDateString(tLocale(language), { day: 'numeric', month: 'long', year: 'numeric' }) })}
           </p>
 
-          {/* 1. Nature of the App */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              1. Nature of the Application
-            </h3>
-            <p>
-              This Telegram Mini App (&quot;the App&quot;) serves as a
-              <strong>product catalog and order request platform</strong>. It allows you
-              to browse products, express interest, and submit an order request.
-            </p>
-            <p className="mt-2">
-              The operator is a <strong>private individual</strong> reselling personal items
-              (for example, used or unworn clothing) via Depop/Yaga or direct communication,
-              using this Mini App as a catalogue and request form.
-            </p>
-            <p className="mt-2 font-semibold text-[var(--shop-cream)]">
-              The App is NOT a point of sale. No payments are processed through the App.
-            </p>
-            <p className="mt-2">
-              By submitting an order request through the App, you express your interest in
-              purchasing the selected items. The actual sale, payment, delivery, and any
-              returns or exchanges are handled outside the App — either through the
-              third-party platforms Depop or Yaga, or by separate direct agreement with
-              the seller.
-            </p>
-          </section>
-
-          {/* 2. Key disclaimers */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              2. Important Disclaimers
-            </h3>
-            <ul className="list-disc space-y-2 pl-5">
-              <li>
-                <strong>No payment processing:</strong> The App does not accept, process, or
-                facilitate any payments. All financial transactions occur exclusively on
-                Depop, Yaga, or through separate arrangements outside the App.
-              </li>
-              <li>
-                <strong>No delivery or shipping:</strong> The App does not handle shipping,
-                delivery logistics, or fulfilment. Delivery arrangements are made by the
-                seller outside the App.
-              </li>
-              <li>
-                <strong>No returns or refunds:</strong> All questions about returns,
-                exchanges, refunds, or guarantees are governed by the terms and conditions
-                of Depop or Yaga (as applicable) or by direct agreement with the seller.
-                The App operator is not responsible for resolving disputes regarding
-                transactions completed outside the App.
-              </li>
-              <li>
-                <strong>Order request is not an order confirmation:</strong> Submitting an
-                order request through the App does not guarantee product availability or
-                final sale. The seller will confirm the order and finalise details outside
-                the App.
-              </li>
-            </ul>
-          </section>
-
-          {/* 3. Giveaway Rules */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              3. Giveaway Rules
-            </h3>
-            <ul className="list-disc space-y-2 pl-5">
-              <li>
-                <strong>Eligibility:</strong> Giveaways are open to users who have accepted
-                these Terms and the Privacy Policy. Winners are selected through a
-                transparent, weighted random draw based on ticket count.
-              </li>
-              <li>
-                <strong>Winner selection:</strong> Winners are drawn using a weighted random
-                algorithm where each ticket represents one chance. Each prize place is drawn
-                independently, and no user can win more than one prize in the same giveaway.
-              </li>
-              <li>
-                <strong>Notification:</strong> Winners are notified via Telegram message. If
-                a winner does not respond within <strong>7 days</strong>, an alternative
-                winner may be selected at the operator&apos;s discretion.
-              </li>
-              <li>
-                <strong>Prize fulfilment:</strong> Prizes are fulfilled outside the App
-                (via Depop, Yaga, or direct arrangement). The operator is not responsible
-                for shipping costs unless explicitly stated.
-              </li>
-            </ul>
-          </section>
-
-          {/* 4. Promo Code Rules */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              4. Promo Code Rules
-            </h3>
-            <ul className="list-disc space-y-2 pl-5">
-              <li>
-                Promo codes are issued at the operator&apos;s discretion and may be
-                time-limited, one-time-use, or subject to other restrictions stated with
-                the code.
-              </li>
-              <li>
-                A promo code provides a discount on the total price of an order request.
-                The discount is applied when the seller and buyer finalise the transaction
-                outside the App.
-              </li>
-              <li>
-                Promo codes have no cash value and cannot be exchanged for money.
-              </li>
-              <li>
-                The operator reserves the right to revoke or modify any promo code at any
-                time without prior notice.
-              </li>
-            </ul>
-          </section>
-
-          {/* 5. User Conduct */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              5. User Conduct
-            </h3>
-            <ul className="list-disc space-y-2 pl-5">
-              <li>
-                You agree not to use the App for any unlawful purpose or in violation of
-                any applicable laws.
-              </li>
-              <li>
-                You agree not to manipulate the giveaway system, referral system, or
-                any other feature of the App through automated means, multiple accounts,
-                or other abusive practices.
-              </li>
-              <li>
-                The operator reserves the right to suspend or terminate access to the App
-                for users who violate these terms.
-              </li>
-            </ul>
-          </section>
-
-          {/* 6. Limitation of Liability */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              6. Limitation of Liability
-            </h3>
-            <p>
-              The App is provided &quot;as is&quot; without any warranty, express or implied.
-              The operator shall not be liable for any damages arising from the use or
-              inability to use the App, including but not limited to issues with
-              transactions completed outside the App on Depop, Yaga, or other platforms.
-            </p>
-          </section>
-
-          {/* 7. Governing Law */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              7. Governing Law
-            </h3>
-            <p>
-              These Terms are governed by the laws of the Republic of Latvia. Any disputes
-              arising from these Terms shall be subject to the exclusive jurisdiction of the
-              courts of Riga, Latvia.
-            </p>
-            <p className="mt-2">
-              If any provision of these Terms is found to be invalid or unenforceable, the
-              remaining provisions shall remain in full force and effect.
-            </p>
-          </section>
-
-          {/* 8. Changes */}
-          <section>
-            <h3 className="mb-2 text-base font-semibold text-[var(--shop-cream)]">
-              8. Changes to These Terms
-            </h3>
-            <p>
-              We may update these Terms from time to time. Material changes will be notified
-              to you via the App or through Telegram. Continued use of the App after changes
-              constitutes acceptance of the updated Terms.
-            </p>
-          </section>
+          <LegalDocBody doc="terms" />
         </div>
 
         {/* Back button */}
         <Button onClick={onBack} variant="primary" size="lg" fullWidth className="mt-6">
-          ← Back
+          {t('legal.back')}
         </Button>
 
         {/* Disclaimer */}
         <p className="mt-4 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-500/70">
-          ⚠️ DRAFT — These terms are a template. They must be reviewed by a qualified
-          lawyer before public launch.
+          {t('legal.disclaimerTerms')}
         </p>
       </article>
     </div>

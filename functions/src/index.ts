@@ -9,9 +9,8 @@ import "./helpers.js"
 export {
   upsertProductAdmin,
   deleteProductsAdmin,
+  setProductDiscountAdmin,
   updateProductSignal,
-  reserveProduct,
-  releaseReservation,
   uploadProductImageAdmin,
   deleteProductImagesAdmin,
 } from "./products.js"
@@ -19,6 +18,8 @@ export {
 export {
   upsertPromoCodeAdmin,
   deletePromoCodesAdmin,
+  validatePromoCode,
+  listPromoCodesAdmin,
 } from "./promoCodes.js"
 
 export {
@@ -39,13 +40,6 @@ export {
 } from "./giveaways.js"
 
 export {
-  upsertPollAdmin,
-  deletePollsAdmin,
-  castPollVote,
-  getPollResultsAdmin,
-} from "./polls.js"
-
-export {
   verifyTelegramAdmin,
   telegramBotWebhook,
   broadcastMessageAdmin,
@@ -54,8 +48,6 @@ export {
   reorderCampaignsAdmin,
   upsertTaskAdmin,
   deleteTasksAdmin,
-  subscribeToNotify,
-  unsubscribeFromNotify,
   toggleBroadcastSubscription,
   getReferralLeaderboard,
   getReferralInfo,
@@ -65,6 +57,10 @@ export {
   dailyCheckin,
   getCheckinStatus,
 } from "./checkin.js"
+
+export {
+  updatePresence,
+} from "./presence.js"
 
 export {
   acceptTermsHandler,

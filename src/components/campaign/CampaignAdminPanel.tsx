@@ -10,6 +10,7 @@ import {
 import { uploadBannerImage } from '../../lib/firebase/storage'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import type { Campaign, CampaignInput } from '../../types/campaign'
+import { AdminFeedbackBanner } from '../ui/AdminFeedbackBanner'
 
 type CampaignAdminPanelProps = {
   initData: string
@@ -37,6 +38,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
     tone: 'success' | 'error'
     message: string
   } | null>(null)
+  const [feedbackRetryable, setFeedbackRetryable] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null)
   const [form, setForm] = useState<CampaignInput>(EMPTY_FORM)
@@ -65,10 +67,25 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
     void loadAll()
   }, [])
 
+  // Track the auto-dismiss timer so newer feedback cancels older pending
+  // dismissals (otherwise an old timer could hide a retryable error early).
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const showFeedback = useCallback(
-    (tone: 'success' | 'error', message: string) => {
+    (tone: 'success' | 'error', message: string, retryable = false) => {
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current)
+        dismissTimerRef.current = null
+      }
       setFeedback({ tone, message })
-      setTimeout(() => setFeedback(null), 3000)
+      setFeedbackRetryable(retryable)
+      // Retryable errors persist so the user has time to act on the retry
+      if (!retryable) {
+        dismissTimerRef.current = setTimeout(() => {
+          dismissTimerRef.current = null
+          setFeedback(null)
+        }, 3000)
+      }
     },
     [],
   )
@@ -203,7 +220,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
       cancelForm()
       await loadAll()
     } catch (err) {
-      showFeedback('error', err instanceof Error ? err.message : 'Failed to save.')
+      showFeedback('error', err instanceof Error ? err.message : 'Failed to save.', true)
     } finally {
       setSaving(false)
       setIsUploading(false)
@@ -266,15 +283,12 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
 
       {/* ── Feedback ── */}
       {feedback ? (
-        <div
-          className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${
-            feedback.tone === 'success'
-              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
-              : 'border-[var(--shop-red)]/30 bg-[var(--shop-red)]/10 text-[var(--shop-red)]'
-          }`}
-        >
-          {feedback.message}
-        </div>
+        <AdminFeedbackBanner
+          tone={feedback.tone}
+          message={feedback.message}
+          className="mt-3"
+          onRetry={feedbackRetryable ? () => void handleSave() : undefined}
+        />
       ) : null}
 
       {/* ── Error ── */}
@@ -286,7 +300,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
 
       {/* ── Form Module (create / edit) ── */}
       {viewMode === 'form' ? (
-        <div ref={formRef} className="mt-4 space-y-4 rounded-[24px] border border-white/10 bg-[#1C1622] p-5">
+        <div ref={formRef} className="mt-4 space-y-4 rounded-[24px] border border-white/10 bg-[var(--shop-panel-solid)] p-5">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-cream)]">
               {editingCampaign ? 'Edit Campaign' : 'New Campaign'}
@@ -375,12 +389,12 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
               onClick={() => fileInputRef.current?.click()}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
-              className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[#A855F7]/30 bg-white/[0.03] px-4 py-8 text-center transition-all hover:border-[#A855F7]/60 hover:bg-white/[0.05]"
+              className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[var(--shop-accent-purple)]/30 bg-white/[0.03] px-4 py-8 text-center transition-all hover:border-[var(--shop-accent-purple)]/60 hover:bg-white/[0.05]"
               aria-label="Upload campaign image (click or drag and drop)"
             >
               <svg
                 viewBox="0 0 24 24"
-                className="h-8 w-8 shrink-0 text-[#A855F7]/50"
+                className="h-8 w-8 shrink-0 text-[var(--shop-accent-purple)]/50"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.5"
@@ -445,7 +459,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                   e.currentTarget.style.display = 'none'
                 }}
               />
-              <div className="border-t border-white/10 bg-white/6 px-3 py-2 text-[10px] text-[var(--shop-muted)]/60">
+              <div className="border-t border-white/10 bg-white/6 px-3.5 py-2.5 text-[11px] text-[var(--shop-muted)]/60">
                 Existing image (upload a new file to replace)
               </div>
             </div>
@@ -524,7 +538,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
             triggerHapticFeedback('light')
             startCreate()
           }}
-          className="mt-4 flex w-full items-center gap-4 rounded-2xl border-2 border-dashed border-white/12 bg-[#1C1622] px-5 py-6 text-left transition-all hover:border-white/25"
+          className="mt-4 flex w-full items-center gap-4 rounded-2xl border-2 border-dashed border-white/12 bg-[var(--shop-panel-solid)] px-5 py-6 text-left transition-all hover:border-white/25"
         >
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/8">
             <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 shrink-0 text-[var(--shop-purple)]" aria-hidden="true">
@@ -577,20 +591,19 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
 
           {/* Campaign rows */}
           {!loading && !error
-            ? items.map((campaign, index) => (
-                <div
-                  key={campaign.id}
-                  className={`group flex items-center gap-4 rounded-2xl border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-3 transition-all ${
-                    campaign.isActive ? 'border-white/10' : 'border-white/6 opacity-55'
-                  }`}
-                >
+            ? items.map((campaign, index) => (                  <div
+                    key={campaign.id}
+                    className={`group flex flex-wrap items-center gap-2 rounded-2xl border bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-3 transition-all ${
+                      campaign.isActive ? 'border-white/10' : 'border-white/6 opacity-55'
+                    }`}
+                  >
                   {/* Reorder arrows */}
                   <div className="flex shrink-0 flex-col gap-0.5">
                     <button
                       type="button"
                       onClick={() => handleMoveUp(index)}
                       disabled={index === 0}
-                      className="flex h-4 w-5 items-center justify-center rounded-[2px] text-[8px] text-[var(--shop-muted)] transition-colors hover:text-white disabled:opacity-20"
+                      className="flex h-6 w-6 items-center justify-center rounded-[4px] text-[9px] text-[var(--shop-muted)] transition-colors hover:text-white disabled:opacity-20"
                       aria-label="Move up"
                     >
                       ▲
@@ -599,7 +612,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                       type="button"
                       onClick={() => handleMoveDown(index)}
                       disabled={index >= items.length - 1}
-                      className="flex h-4 w-5 items-center justify-center rounded-[2px] text-[8px] text-[var(--shop-muted)] transition-colors hover:text-white disabled:opacity-20"
+                      className="flex h-6 w-6 items-center justify-center rounded-[4px] text-[9px] text-[var(--shop-muted)] transition-colors hover:text-white disabled:opacity-20"
                       aria-label="Move down"
                     >
                       ▼
@@ -607,7 +620,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                   </div>
 
                   {/* Image thumbnail */}
-                  <div className="w-24 shrink-0 overflow-hidden rounded-xl bg-black/30 sm:w-28">
+                  <div className="w-20 shrink-0 overflow-hidden rounded-xl bg-black/30 sm:w-24">
                     <div className="aspect-video w-full">
                       {campaign.imageUrl ? (
                         <img
@@ -660,15 +673,17 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                     </p>
                   </div>
 
-                  {/* Action buttons group */}
-                  <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Action buttons group — ml-auto keeps them right-aligned;
+                      on narrow screens the wrap moves them to their own line
+                      instead of overflowing the card. */}
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => {
                         triggerHapticFeedback('light')
                         startEdit(campaign)
                       }}
-                      className="rounded-lg border border-white/12 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-colors hover:bg-white/14"
+                      className="rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)] transition-colors hover:bg-white/14"
                     >
                       Edit
                     </button>
@@ -678,14 +693,14 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                         <button
                           type="button"
                           onClick={() => void handleDelete(campaign.id)}
-                          className="rounded-lg bg-[var(--shop-red)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white"
+                          className="rounded-lg bg-[var(--shop-red)] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white"
                         >
                           Confirm
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeleteConfirmId(null)}
-                          className="rounded-lg border border-white/10 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
+                          className="rounded-lg border border-white/10 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]"
                         >
                           No
                         </button>
@@ -697,7 +712,7 @@ export function CampaignAdminPanel({ initData }: CampaignAdminPanelProps) {
                           triggerHapticFeedback('light')
                           setDeleteConfirmId(campaign.id)
                         }}
-                        className="rounded-lg border border-white/12 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-red)]/30 hover:bg-[var(--shop-red)]/12 hover:text-[var(--shop-red)]"
+                        className="rounded-lg border border-white/12 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)] transition-colors hover:border-[var(--shop-red)]/30 hover:bg-[var(--shop-red)]/12 hover:text-[var(--shop-red)]"
                         aria-label="Delete campaign"
                       >
                         <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">

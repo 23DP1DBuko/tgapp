@@ -1,7 +1,125 @@
 // ── Orders Module ──
 import { onRequest } from 'firebase-functions/v2/https';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { telegramBotToken, telegramMiniAppUrl, isOrderStatus, readAdminIdsFromEnv, verifyTelegramInitData, toApiOrder, isValidCheckoutOrderPayload, isValidOrderTransition, sendTelegramOrderCancelledMessage, sendTelegramOrderPaidMessage, sendTelegramOrderReadyForMeetupMessage, sendTelegramOrderCompletedMessage, sendTelegramOrderCreatedMessage, } from './helpers.js';
+import { telegramBotToken, telegramMiniAppUrl, isOrderStatus, readAdminIdsFromEnv, verifyTelegramInitData, toApiOrder, isValidCheckoutOrderPayload, isValidOrderTransition, sendTelegramOrderCancelledMessage, sendTelegramOrderPaidMessage, sendTelegramOrderReadyForMeetupMessage, sendTelegramOrderCompletedMessage, sendTelegramOrderCreatedMessage, countReferralsExcludingSelf, applyProductDiscount, } from './helpers.js';
+/**
+ * Thrown when a checkout is submitted with a clientOrderId that already has an
+ * order — the retry / double-tap / lost-response path. The caller returns the
+ * existing order id instead of creating a duplicate (M4 idempotency).
+ */
+export class DuplicateCheckoutError extends Error {
+    existingOrderId;
+    existingOwnerId;
+    constructor(existingOrderId, existingOwnerId) {
+        super(`Duplicate checkout: order ${existingOrderId} already exists.`);
+        this.name = 'DuplicateCheckoutError';
+        this.existingOrderId = existingOrderId;
+        this.existingOwnerId = existingOwnerId;
+    }
+}
+export function computePromoDiscount(promo, subtotal) {
+    if (!Number.isFinite(subtotal) || subtotal <= 0)
+        return 0;
+    const rawDiscount = promo.discountType === 'percentage'
+        ? Number(((subtotal * promo.discountValue) / 100).toFixed(2))
+        : promo.discountValue;
+    return Math.min(subtotal, Math.max(0, rawDiscount));
+}
+export function validateCheckoutPromo(promo, submitted, subtotal, nowMs) {
+    if (!submitted) {
+        return { status: 'valid', discountAmount: 0 };
+    }
+    if (!promo) {
+        return { status: 'promo_invalid' };
+    }
+    if (promo.isActive !== true) {
+        return { status: 'promo_inactive' };
+    }
+    const expiresMs = promo.expiresAt
+        ? typeof promo.expiresAt === 'object' && 'toMillis' in promo.expiresAt
+            ? promo.expiresAt.toMillis()
+            : promo.expiresAt.getTime()
+        : null;
+    if (expiresMs !== null && expiresMs <= nowMs) {
+        return { status: 'promo_expired' };
+    }
+    const usageLimit = promo.usageLimit ?? null;
+    const usageCount = promo.usageCount ?? 0;
+    if (typeof usageLimit === 'number' && usageCount >= usageLimit) {
+        return { status: 'promo_exhausted' };
+    }
+    if (promo.discountType !== submitted.discountType ||
+        promo.discountValue !== submitted.discountValue) {
+        return { status: 'promo_invalid' };
+    }
+    const discountAmount = computePromoDiscount({ discountType: submitted.discountType, discountValue: submitted.discountValue }, subtotal);
+    if (submitted.discountAmount !== discountAmount) {
+        return { status: 'promo_invalid' };
+    }
+    return { status: 'valid', discountAmount };
+}
+/**
+ * Compute the set of product ids locked as giveaway prizes.
+ *
+ * A prize product is locked when its giveaway is not a `draft` (still being
+ * edited) and the admin has not enabled `prizesForSale` (e.g. the winner
+ * declined after the draw). This mirrors the storefront's badge logic, but
+ * enforced server-side at checkout so a crafted or stale cart can never
+ * purchase a prize.
+ */
+export function buildGiveawayLockedProductIds(giveawaySnapshots) {
+    const lockedProductIds = new Set();
+    for (const giveawaySnapshot of giveawaySnapshots) {
+        const giveawayData = giveawaySnapshot.data();
+        if (!giveawaySnapshot.exists || !giveawayData)
+            continue;
+        if (giveawayData.status === 'draft' || giveawayData.prizesForSale === true)
+            continue;
+        for (const prize of giveawayData.prizes ?? []) {
+            if (typeof prize?.productId === 'string' && prize.productId) {
+                lockedProductIds.add(prize.productId);
+            }
+        }
+    }
+    return lockedProductIds;
+}
+/**
+ * Initial order status derived server-side (H2): the client-supplied status is
+ * never trusted at creation. USDT orders start `waiting_for_payment`, every
+ * other payment method starts `new`.
+ */
+export function getInitialOrderStatus(paymentMethod) {
+    return paymentMethod === 'usdt' ? 'waiting_for_payment' : 'new';
+}
+/**
+ * Builds the stored order document, enforcing server-side invariants:
+ * - `status` is always derived from the payment method (never taken from the request)
+ * - `telegramUserId` is always the verified buyer id (never client-supplied)
+ */
+export function buildOrderDocument(body, verifiedTelegramUserId, serverSubtotal, serverTotal) {
+    return {
+        clientOrderId: body.clientOrderId,
+        fullName: body.fullName.trim(),
+        telegramHandle: body.telegramHandle.trim(),
+        telegramUserId: verifiedTelegramUserId,
+        note: body.note,
+        fulfillmentType: body.fulfillmentType,
+        paymentMethod: body.paymentMethod,
+        deliveryCity: body.deliveryCity,
+        deliveryAddress: body.deliveryAddress,
+        deliveryNotes: body.deliveryNotes,
+        meetupLocation: body.meetupLocation,
+        meetupTimeOption: body.meetupTimeOption,
+        meetupNotes: body.meetupNotes,
+        items: body.items,
+        subtotal: serverSubtotal,
+        appliedPromo: body.appliedPromo,
+        total: serverTotal,
+        status: getInitialOrderStatus(body.paymentMethod),
+        cancelReason: body.cancelReason,
+        createdAt: FieldValue.serverTimestamp(),
+    };
+}
 export const updateOrderStatusAdmin = onRequest({
     cors: true,
     invoker: 'public',
@@ -235,7 +353,9 @@ export const createCheckoutOrder = onRequest({
     try {
         const db = getFirestore();
         const productIds = body.items.map((item) => item.productId);
-        const orderRef = db.collection('orders').doc();
+        // Deterministic order id = the client idempotency key, so a retried
+        // submission maps to the same document and can never create a duplicate.
+        const orderRef = db.collection('orders').doc(body.clientOrderId);
         // Look up the promo code document reference if a promo was applied
         const promoCode = body.appliedPromo?.code ?? '';
         let promoDocRef = null;
@@ -249,39 +369,64 @@ export const createCheckoutOrder = onRequest({
                 promoDocRef = promoSnapshot.docs[0].ref;
             }
         }
-        // Count referrals for early access eligibility check
+        // Count referrals for the early-access eligibility check. Self-referrals
+        // are excluded (H4): opening your own /start link must never unlock
+        // early access.
         const referralCode = `ref_${verifiedTelegramUserId}`;
-        const referredSnapshot = await db
-            .collection('telegramSubscribers')
-            .where('referredBy', '==', referralCode)
-            .count()
-            .get();
-        const referralCount = referredSnapshot.data().count;
+        const referralCount = await countReferralsExcludingSelf(db, referralCode);
+        // Prize products of non-draft giveaways (unless the admin enabled
+        // "prizes for sale") can never be bought — the storefront only hides
+        // them, so the checkout enforces the same lock authoritatively.
+        const giveawayRefs = (await db.collection('giveaways').get()).docs.map((documentSnapshot) => documentSnapshot.ref);
         const now = Date.now();
         await db.runTransaction(async (transaction) => {
+            // Idempotency: if an order for this clientOrderId already exists, return
+            // it instead of charging the promo / selling the products again. The
+            // whole transaction aborts, so no duplicate side effects ever occur.
+            const existingOrderSnapshot = await transaction.get(orderRef);
+            if (existingOrderSnapshot.exists) {
+                const existingOwnerId = existingOrderSnapshot.data()?.telegramUserId ?? null;
+                if (existingOwnerId !== verifiedTelegramUserId) {
+                    throw new Error('Checkout key belongs to another user');
+                }
+                throw new DuplicateCheckoutError(orderRef.id, existingOwnerId);
+            }
             const productRefs = productIds.map((productId) => db.collection('products').doc(productId));
             const productSnapshots = await Promise.all(productRefs.map((productRef) => transaction.get(productRef)));
+            // Re-read the giveaways inside the transaction so the lock set is
+            // consistent with the product reads (same pattern as the promo ref).
+            const giveawaySnapshots = await Promise.all(giveawayRefs.map((giveawayRef) => transaction.get(giveawayRef)));
+            const giveawayLockedProductIds = buildGiveawayLockedProductIds(giveawaySnapshots);
             productSnapshots.forEach((productSnapshot, index) => {
                 const productData = productSnapshot.data();
                 if (!productSnapshot.exists || !productData?.isAvailable) {
                     throw new Error(`Product unavailable: ${productIds[index]}`);
                 }
-                // Reservation check: if product is reserved by someone else, reject
-                const reservedBy = productData.reservedBy ?? null;
-                const reservedUntilMs = productData.reservedUntil?.toMillis() ?? null;
-                if (reservedBy !== null && reservedUntilMs !== null && reservedUntilMs > now) {
-                    if (reservedBy !== verifiedTelegramUserId) {
-                        throw new Error(`Product reserved by another buyer: ${productIds[index]}`);
-                    }
-                    // Reserved by this user — allow checkout, reservation will be cleared below
+                // Giveaway prize lock: a product tied to a non-draft giveaway
+                // (unless "prizes for sale" is on) is never purchasable, even via a
+                // crafted or stale cart.
+                if (giveawayLockedProductIds.has(productIds[index])) {
+                    throw new Error(`Giveaway prize not for sale: ${productIds[index]}`);
                 }
-                // Early access window check
+                // Admin "upcoming" flag: marked not-for-sale-yet, regardless of dates
+                if (productData.upcoming === true) {
+                    throw new Error(`Drop not started: ${productIds[index]}`);
+                }
+                // Scheduled drop check: before the earliest scheduled time, no one can buy
                 const earlyAccessMs = productData.earlyAccessAt
                     ? new Date(productData.earlyAccessAt).getTime()
                     : null;
                 const publicMs = productData.publicAt
                     ? new Date(productData.publicAt).getTime()
                     : null;
+                const scheduledMs = earlyAccessMs !== null
+                    ? publicMs !== null
+                        ? Math.min(earlyAccessMs, publicMs)
+                        : earlyAccessMs
+                    : publicMs;
+                if (scheduledMs !== null && now < scheduledMs) {
+                    throw new Error(`Drop not started: ${productIds[index]}`);
+                }
                 if (earlyAccessMs !== null && now >= earlyAccessMs) {
                     const isPublic = publicMs !== null && now >= publicMs;
                     if (!isPublic && referralCount < 1) {
@@ -289,58 +434,50 @@ export const createCheckoutOrder = onRequest({
                     }
                 }
                 const requestedItem = body.items[index];
-                if (productData.price !== requestedItem.price ||
+                // The client pays the discounted (effective) price, so the submitted
+                // item price is validated against it — never the raw base price.
+                const effectivePrice = applyProductDiscount(productData.price ?? 0, productData.discountType, productData.discountValue);
+                if (effectivePrice !== requestedItem.price ||
                     productData.currency !== requestedItem.currency) {
                     throw new Error(`Product mismatch: ${productIds[index]}`);
                 }
             });
-            // Increment promo usage count inside the transaction
-            if (promoDocRef) {
-                const promoSnapshot = await transaction.get(promoDocRef);
-                const promoData = promoSnapshot.data();
-                if (promoData) {
-                    const currentUsage = promoData.usageCount ?? 0;
-                    const limit = promoData.usageLimit;
-                    if (typeof limit === 'number' && currentUsage >= limit) {
-                        throw new Error(`Promo usage exhausted: ${promoCode}`);
-                    }
-                    transaction.update(promoDocRef, {
-                        usageCount: FieldValue.increment(1),
-                    });
-                }
+            // Recompute the subtotal from verified (discounted) product prices
+            // (never trust the client for money math) and enforce totals + promo
+            // validity in-transaction.
+            let serverSubtotal = 0;
+            for (let i = 0; i < productSnapshots.length; i++) {
+                const product = productSnapshots[i].data();
+                serverSubtotal += applyProductDiscount(typeof product?.price === 'number' ? product.price : 0, product?.discountType, product?.discountValue);
             }
-            transaction.set(orderRef, {
-                fullName: body.fullName.trim(),
-                telegramHandle: body.telegramHandle.trim(),
-                telegramUserId: body.telegramUserId ?? null,
-                note: body.note,
-                fulfillmentType: body.fulfillmentType,
-                paymentMethod: body.paymentMethod,
-                deliveryCity: body.deliveryCity,
-                deliveryAddress: body.deliveryAddress,
-                deliveryNotes: body.deliveryNotes,
-                meetupLocation: body.meetupLocation,
-                meetupTimeOption: body.meetupTimeOption,
-                meetupNotes: body.meetupNotes,
-                items: body.items,
-                subtotal: body.subtotal,
-                appliedPromo: body.appliedPromo,
-                total: body.total,
-                status: body.status,
-                cancelReason: body.cancelReason,
-                createdAt: FieldValue.serverTimestamp(),
-            });
+            let promoSnapshot = null;
+            if (promoDocRef) {
+                promoSnapshot = await transaction.get(promoDocRef);
+            }
+            const promoValidation = validateCheckoutPromo(promoSnapshot?.data(), body.appliedPromo, serverSubtotal, now);
+            if (promoValidation.status !== 'valid') {
+                throw new Error(`Promo rejected: ${promoValidation.status}`);
+            }
+            const serverTotal = Math.max(0, serverSubtotal - promoValidation.discountAmount);
+            if (body.subtotal !== serverSubtotal || body.total !== serverTotal) {
+                throw new Error('Checkout totals mismatch');
+            }
+            // Increment promo usage count only after the promo was validated
+            if (promoDocRef) {
+                transaction.update(promoDocRef, {
+                    usageCount: FieldValue.increment(1),
+                });
+            }
+            transaction.set(orderRef, buildOrderDocument(body, verifiedTelegramUserId, serverSubtotal, serverTotal));
             productRefs.forEach((productRef) => {
                 transaction.update(productRef, {
                     isAvailable: false,
                     cartCount: FieldValue.increment(-1),
-                    reservedBy: FieldValue.delete(),
-                    reservedUntil: FieldValue.delete(),
                 });
             });
         });
         // Send order confirmation via Telegram (fire-and-forget)
-        sendTelegramOrderCreatedMessage(botToken, telegramMiniAppUrl.value(), verifiedTelegramUserId, orderRef.id, body.items.map((i) => i.name).join(', '), body.total, body.fulfillmentType, body.status).catch(() => {
+        sendTelegramOrderCreatedMessage(botToken, telegramMiniAppUrl.value(), verifiedTelegramUserId, orderRef.id, body.items.map((i) => i.name).join(', '), body.total, body.fulfillmentType, getInitialOrderStatus(body.paymentMethod)).catch(() => {
             // Notification is best-effort; don't block the checkout response
         });
         response.status(200).json({
@@ -350,20 +487,65 @@ export const createCheckoutOrder = onRequest({
         });
     }
     catch (error) {
+        // Idempotent success: the order for this clientOrderId already exists
+        // (retry / double-tap / lost response). Return the existing order id and
+        // skip the confirmation message — it was sent on the first submission.
+        if (error instanceof DuplicateCheckoutError) {
+            response.status(200).json({
+                ok: true,
+                orderId: error.existingOrderId,
+                reason: 'already_exists',
+            });
+            return;
+        }
         const detail = error instanceof Error ? error.message : 'Unknown backend error.';
         let status = 500;
         let reason = 'internal_error';
-        if (detail.startsWith('Product unavailable:')) {
+        if (detail.startsWith('Checkout key belongs to another user')) {
+            status = 400;
+            reason = 'invalid_payload';
+        }
+        else if (detail.startsWith('Product unavailable:')) {
             status = 409;
             reason = 'product_unavailable';
         }
-        else if (detail.startsWith('Promo usage exhausted:')) {
+        else if (detail.startsWith('Product mismatch:')) {
+            // Price changed server-side since the item was added to the cart (e.g.
+            // the admin edited the price or set a discount) — refresh the catalog.
+            status = 409;
+            reason = 'product_unavailable';
+        }
+        else if (detail.startsWith('Giveaway prize not for sale:')) {
+            status = 409;
+            reason = 'giveaway_prize';
+        }
+        else if (detail.startsWith('Promo rejected: promo_exhausted')) {
             status = 409;
             reason = 'promo_exhausted';
+        }
+        else if (detail.startsWith('Promo rejected: promo_inactive')) {
+            status = 409;
+            reason = 'promo_inactive';
+        }
+        else if (detail.startsWith('Promo rejected: promo_expired')) {
+            status = 409;
+            reason = 'promo_expired';
+        }
+        else if (detail.startsWith('Promo rejected: promo_invalid')) {
+            status = 400;
+            reason = 'promo_invalid';
+        }
+        else if (detail.startsWith('Checkout totals mismatch')) {
+            status = 400;
+            reason = 'invalid_payload';
         }
         else if (detail.startsWith('Early access restricted:')) {
             status = 403;
             reason = 'early_access_restricted';
+        }
+        else if (detail.startsWith('Drop not started:')) {
+            status = 403;
+            reason = 'drop_not_started';
         }
         else if (detail.startsWith('Product reserved by another buyer:')) {
             status = 409;

@@ -54,8 +54,23 @@ Notes:
 - `upcoming` is an optional boolean to mark a product as upcoming.
 - `earlyAccessAt` is an optional ISO datetime string for the start of early access windows.
 - `publicAt` is an optional ISO datetime string for when public release begins.
-- `reservedBy` is an optional number storing the Telegram user ID who currently has a reservation hold on the product.
-- `reservedUntil` is an optional Timestamp indicating when the current reservation expires. When this time passes, the product can be reserved by another buyer. Both `reservedBy` and `reservedUntil` are set/cleared together by the `reserveProduct` and `releaseReservation` Cloud Functions, and are cleared during successful checkout. The reservation duration defaults to 15 minutes and is configurable via the `RESERVATION_DURATION_MS` environment variable on Cloud Functions.
+
+#### Subcollection: `products/{productId}/signals/{telegramUserId}`
+
+Stores each user's per-product popularity contribution so the shared counters can never be spammed.
+
+```ts
+type ProductSignalDocument = {
+  likesCount: 0 | 1
+  cartCount: 0 | 1
+}
+```
+
+Notes:
+- Document ID is the stringified Telegram user id — a user contributes **at most 1** per signal per product (cart de-dupes products client-side, so binary contribution matches product-line semantics).
+- `updateProductSignal` reads the signal doc and the product counter in a single Firestore transaction; a repeated `+1` is a no-op (`already_applied`) and a `-1` with no contribution is a no-op (`not_applied`), so spamming can never inflate or drain `likesCount`/`cartCount`.
+- Counters therefore reflect the number of *distinct users* currently liking / holding the product (plus any pre-fix legacy base value).
+- Read and write access is denied from the client (firestore.rules); only Functions can access.
 
 ---
 
@@ -67,6 +82,7 @@ Document shape:
 
 ```ts
 type OrderDocument = {
+  clientOrderId: string
   fullName: string
   telegramHandle: string
   telegramUserId?: number
@@ -101,7 +117,7 @@ type OrderDocument = {
 ```
 
 Notes:
-- Firestore document ID acts as the order `id` in the app.
+- The Firestore document ID **is** the client-generated `clientOrderId` idempotency key (M4) and doubles as the order `id` in the app. Retries / double-taps map to the same document, so duplicate orders are impossible; the field is stored on the doc for auditability.
 - `items` stores a snapshot of the purchased cart items at checkout time.
 - Each item keeps `productId`, `name`, `price`, `currency`, and `image` so order history stays stable even if product data changes later.
 - `fulfillmentType` decides whether the order is for delivery or meetup.
@@ -142,6 +158,7 @@ Notes:
 - `expiresAt` may be `null` when the promo has no expiration date.
 - `usageLimit` may be `null` when the promo has no hard limit.
 - `usageCount` tracks how many times the promo has been used. It is incremented atomically inside the checkout transaction. When `usageLimit` is set and `usageCount >= usageLimit`, the promo is treated as exhausted and checkout is rejected with `promo_exhausted`. Old documents without `usageCount` default to `0`.
+- The collection is **not client-readable** (L9): buyers validate codes through the `/api/promos/validate` Cloud Function (`validatePromoCode`), and admins list them through `/api/admin/listPromoCodes` (`listPromoCodesAdmin`). The checkout function (`createCheckoutOrder`) remains the authoritative validator.
 
 ---
 
@@ -172,7 +189,7 @@ Notes:
 - `failedCount` is the number of chats that failed to receive the message.
 - `reason` contains the broadcast intent or trigger reason (e.g. `"new_drop"`).
 - `text` is the broadcast message content sent to subscribers.
-- Firestore security rules allow public reads (same as `products` and `promoCodes`), but client-side writes are denied — broadcasts are only created server-side.
+- Firestore security rules allow public reads (same as `products`), but client-side writes are denied — broadcasts are only created server-side.
 
 ---
 
@@ -386,29 +403,79 @@ Notes:
 
 ### `giveaways`
 
-This collection stores giveaway entries shown in the Rewards section.
+This collection stores giveaways (with prizes and entry tasks) shown in the Rewards section.
 
 Document shape:
 
 ```ts
 type GiveawayDocument = {
-  productId: string
-  productName: string
-  productImage: string
-  totalTickets: number
+  title: string
+  description: string
+  imageUrl: string
+  status: 'draft' | 'scheduled' | 'live' | 'finished' | 'announced'
+  startAt: string | null
+  endAt: string
+  prizes: Array<{
+    productId: string
+    place: number
+    productName: string
+    productImage: string
+  }>
+  winnersCount: number
+  accessLevel: 'public' | 'early_access_only'
+  entryTasks: Array<{
+    id: string
+    type: 'join_channel' | 'invite_friend' | 'like_product' | 'custom'
+    label: string
+    ticketsGranted: number
+    verifyMethod: 'telegram_api' | 'referral_count' | 'client_claim' | 'manual'
+    metadata: string | null
+  }>
+  taskIds: string[]
+  taskTickets: Record<string, number>
+  baseEntryTickets: number
+  prizesForSale: boolean
   enteredCount: number
-  endsAt: string | null
-  isActive: boolean
-  winnerUsername: string | null
+  totalTicketsPool: number
+  winners: Array<{
+    place: number
+    productId: string
+    telegramUserId: number
+    telegramUsername: string | null
+    ticketsAtWinTime: number
+  }> | null
+  drawSeed: string | null
+  drawMethod: 'seeded_weighted_ticket' | null
+  drawAlgorithmVersion: number | null
+  finishedAt: string | null
   createdAt: string
   updatedAt: string
 }
 ```
 
 Notes:
+- `prizesForSale` is an **admin toggle** (default `false`): when `true`, the storefront treats the prize products as normal sellable items again (e.g. the winner declined after the draw). The storefront's giveaway-prize lock skips giveaways with this flag set.
+- Since 2026-08-09 (L2) the draw uses a **CSPRNG seed** (`drawSeed`, 256-bit hex from `crypto.randomBytes`) and a deterministic SHA-256-derived PRNG (`seeded_weighted_ticket`, `drawAlgorithmVersion: 1`) over entries sorted by doc id — so a finished giveaway's draw can be **re-verified** from the stored seed. Code generation (`generateShortId`, check-in `DAILY*` codes, referral `REF*` codes) also uses `crypto.randomInt`.
+
+Player entries live in the subcollection `giveaways/{giveawayId}/entries`:
+
+```ts
+type GiveawayEntry = {
+  telegramUserId: number
+  telegramUsername: string | null
+  joinedAt: string
+  completedTaskIds: string[]
+  totalTickets: number
+}
+```
+
+Notes:
 - Public read, writes only via Cloud Functions.
-- `totalTickets` is the number of tickets needed to enter.
-- `enteredCount` tracks current entries.
+- Entry document ID is the **stringified `telegramUserId`** (since 2026-08-09, H5). `joinGiveaway` and `completeGiveawayTask` read that doc **inside** the checkout-style transaction, so concurrent joins/completions serialize on it and duplicate entries or double-granted task tickets are impossible.
+- Legacy entries created before H5 used random document ids; both transactions still detect them via a `telegramUserId` fallback query so they are never duplicated or double-rewarded. Invariant: a user can never have both a legacy entry and a deterministic entry — the join path checks the deterministic doc first and falls back to the legacy query, so at most one entry per user exists.
+- `status` gates all player actions (join/task/draw). Since 2026-08-09 (GW-5/GW-6) the join and task transactions also enforce `endAt` (a `live` giveaway past its end date rejects new entries and task completions with `giveaway_ended`) and `accessLevel: 'early_access_only'` (join requires ≥ 1 real referral, self-referrals excluded, else `access_restricted`).
+- `getGiveawayEntries` returns a **privacy-scrubbed** leaderboard (L1, since 2026-08-09): each row contains only `telegramUsername`, `joinedAt`, `totalTickets` and a server-computed `isMe` — never `telegramUserId` or `completedTaskIds`. The requester's own full entry (including their own `telegramUserId` and `completedTaskIds`) is returned separately as `myEntry`.
+- `entryTasks[].verifyMethod` is **enforced server-side** (since 2026-08-09, H6) before task tickets are granted: `manual` passes (honor-system); `referral_count` requires the user to have been referred (`referredBy` set) or — when `metadata` is a positive integer N — to have ≥ N real referrals (self-referrals excluded); `telegram_api` requires a bot `getChatMember` membership check on the chat id in `metadata` (missing chat id or API error fails closed); `client_claim` (like-product tasks, since 2026-08-09) compares the integer threshold in `metadata` (default 1) against the user's **server-tracked** like count in `userStats/{telegramUserId}.likedProductCount` (maintained transactionally by `updateProductSignal` on every like/unlike) — a missing `userStats` doc fails closed (count 0), so the device can never self-verify. The client still shows an instant device-local pre-check, but the server is authoritative.
 
 ---
 
@@ -421,10 +488,11 @@ Document shape:
 ```ts
 type TaskDocument = {
   title: string
-  rewardType: 'coupon' | 'ticket'
-  rewardValue: string
   status: 'active' | 'inactive'
   sortOrder: number
+  actionUrl?: string
+  taskType?: 'custom' | 'join_channel' | 'invite_friend' | 'like_product'
+  requiredCount?: number
   createdAt: string
   updatedAt: string
 }
@@ -432,7 +500,9 @@ type TaskDocument = {
 
 Notes:
 - Public read, writes only via Cloud Functions.
-- `rewardValue` depends on `rewardType` — a coupon code or ticket count string.
+- Tasks are **giveaway-only** — the ticket count per task lives on the giveaway (`taskTickets`), not here. Legacy `rewardType`/`rewardValue`/`actionLabel` fields may still exist on old docs but are no longer written or read.
+- When a task is attached to a giveaway, `taskType` (since 2026-08-09) decides how it is verified: `custom` (default) → `verifyMethod: 'manual'` with `actionUrl` as metadata; `join_channel` → `telegram_api` with `actionUrl` as the channel; `invite_friend` → `referral_count` with `requiredCount` as the threshold (or no threshold when unset — any real referral passes); `like_product` → `client_claim` with `requiredCount` as the required like count (default 1).
+- Saving a task **propagates immediately** (since 2026-08-09): `upsertTaskAdmin` re-resolves the task inside every giveaway that references it (`taskIds` array-contains), so the buyer UI and enforcement update without re-saving the giveaway. Completion also re-resolves defensively as a fallback.
 
 ---
 
@@ -488,7 +558,109 @@ Notes:
 - Created/updated server-side by the `telegramBotWebhook` Cloud Function.
 - Read and write access is denied from the client; only Functions can access.
 - `allowBroadcasts` is used by the broadcast function to filter recipients.
-- `referredBy` is an optional field for tracking referral sources.
+- `referredBy` is an optional field for tracking referral sources. Self-referrals (subscriber === referrer) are never stored (write-time guard) and are excluded from every referral count (early access, milestones, leaderboard, analytics) — H4 protection.
+
+---
+
+### `referralRewards`
+
+This collection records which referral milestone promo codes have already been granted to a user, so a code is never issued twice.
+
+Document shape:
+
+```ts
+type ReferralRewardsDocument = {
+  [threshold: string]: {
+    promoCode: string
+    promoCodeId: string
+    grantedAt: string
+  }
+}
+```
+
+Example for a user who reached the 3-referral milestone:
+
+```json
+{
+  "3": {
+    "promoCode": "REF05_1234_AB12",
+    "promoCodeId": "promoDocId",
+    "grantedAt": "2026-01-01T12:00:00.000Z"
+  }
+}
+```
+
+Notes:
+- Document ID is the stringified `telegramUserId`.
+- Each top-level key is the referral-count threshold (`3`, `5`, `10`, `15`) that was reached.
+- Milestones grant one-time percentage promo codes (`5%`, `10%`, `15%`, `25%` OFF) written to `promoCodes` with a 30-day expiry and a usage limit of 1.
+- Grants are created and the promo code written inside a single Firestore transaction by `processAndCheckRewards` (invoked by `getReferralInfo`), so concurrent calls can never double-grant.
+- Read and write access is denied from the client; only Functions can access.
+
+---
+
+### `userStats`
+
+This collection stores per-user server-tracked counters used for task verification.
+
+Document shape:
+
+```ts
+type UserStatsDocument = {
+  telegramUserId: number
+  likedProductCount: number
+  updatedAt: string
+}
+```
+
+Notes:
+- Document ID is the stringified `telegramUserId`.
+- `likedProductCount` is incremented/decremented **inside the same transaction** as the per-user like signal in `products/{productId}/signals/{telegramUserId}` (by `updateProductSignal`), so dedupe is inherited: a repeated `+1` on the same product returns `already_applied` and never inflates the count, and `-1` without a contribution returns `not_applied`. The count is clamped at 0.
+- Read and write access is denied from the client; only Functions can access.
+- Used by giveaway `client_claim` tasks ("like N products") as the authoritative server-side count.
+
+---
+
+### `userSettings`
+
+This collection stores per-user privacy preferences.
+
+Document shape:
+
+```ts
+type UserSettingsDocument = {
+  telegramUserId: number
+  leaderboardShown: boolean
+  allowBroadcasts: boolean
+  updatedAt: string
+}
+```
+
+Notes:
+- Document ID is the stringified `telegramUserId`.
+- Created/updated by the `updateUserSettingsHandler` Cloud Function (from Preferences: broadcast subscription and leaderboard visibility).
+- `leaderboardShown` defaults to `true` when the document or field is missing — only an explicit `false` hides a user from the referral leaderboard.
+- `getReferralLeaderboard` filters out referrers with `leaderboardShown === false`, so users who opted out never appear in the public leaderboard or in rank computation.
+- Read and write access is denied from the client; only Functions can access.
+
+---
+
+### `presence`
+
+This collection powers the realtime online-user counter shown in the app shell.
+
+Document shape:
+
+```ts
+type PresenceDocument = {
+  lastSeen: Timestamp
+}
+```
+
+Notes:
+- Document ID is the stringified `telegramUserId`.
+- Written only by the `updatePresence` Cloud Function (server-verified heartbeat, every 60s per active user); the client can **read** the collection (to count active users) but never writes it — `firestore.rules` deny all client writes, so the counter can never be inflated with fake docs (M6).
+- Docs are never deleted; a user counts as online when `lastSeen` is within the 5-minute active window (readers filter client-side).
 
 ---
 
@@ -499,18 +671,19 @@ The following table summarizes the Firestore security rules for each collection:
 | Collection | Read | Write | Notes |
 |---|---|---|---|
 | `products` | Public | Denied | Writes handled by Cloud Functions |
-| `promoCodes` | Public | Denied | Writes handled by Cloud Functions |
+| `promoCodes` | Denied | Denied | All access via Cloud Functions only |
 | `orders` | Denied | Denied | All access via Cloud Functions |
 | `broadcasts` | Public | Denied | Writes handled server-side by Telegram bot |
 | `campaigns` | Public | Denied | Writes handled by Cloud Functions |
 | `giveaways` | Public | Denied | Writes handled by Cloud Functions |
 | `tasks` | Public | Denied | Writes handled by Cloud Functions |
 | `bannerSlides` | Public | Denied | Writes handled by Cloud Functions or direct Firestore |
-| `polls` | Public | Denied | Writes handled by Cloud Functions |
-| `pollVotes` | Denied | Denied | All access via Cloud Functions only |
 | `telegramSubscribers` | Denied | Denied | All access via Cloud Functions only |
-| `productNotifySubscriptions` | Denied | Denied | All access via Cloud Functions only |
+| `referralRewards` | Denied | Denied | All access via Cloud Functions only |
+| `userStats` | Denied | Denied | All access via Cloud Functions only |
+| `userSettings` | Denied | Denied | All access via Cloud Functions only |
 | `userRewards` | Denied | Denied | All access via Cloud Functions only |
+| `presence` | Public | Denied | Reads public (online counter); writes only via Cloud Functions (server-verified heartbeat) |
 
 ---
 

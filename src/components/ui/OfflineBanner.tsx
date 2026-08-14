@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { useI18n } from '../../lib/i18n'
+
 type OfflineBannerProps = {
   isOnline: boolean
   wasOffline: boolean
@@ -11,6 +13,7 @@ export function OfflineBanner({
   wasOffline,
   onDismiss,
 }: OfflineBannerProps) {
+  const { t } = useI18n()
   const [visible, setVisible] = useState(false)
   const [mode, setMode] = useState<'offline' | 'reconnected'>('offline')
 
@@ -93,8 +96,8 @@ export function OfflineBanner({
           }`}
         >
           {mode === 'offline'
-            ? 'No internet connection. Some features may be limited.'
-            : 'Back online!'}
+            ? t('offline.offline')
+            : t('offline.backOnline')}
         </p>
         <button
           type="button"
@@ -103,7 +106,7 @@ export function OfflineBanner({
             onDismiss()
           }}
           className="rounded-full p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white/80"
-          aria-label="Dismiss"
+          aria-label={t('offline.dismissAria')}
         >
           <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0">
             <g transform="translate(4, 4)">

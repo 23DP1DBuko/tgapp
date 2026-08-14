@@ -64,6 +64,7 @@ declare global {
           onClick(callback: () => void): void
           offClick(callback: () => void): void
         }
+        openTelegramLink?: (url: string) => void
         MainButton?: {
           isVisible: boolean
           isActive: boolean
@@ -98,6 +99,8 @@ function getDevMockState(): TelegramWebAppState {
   const userId = Number(import.meta.env.VITE_DEV_TELEGRAM_USER_ID) || 12345
   const username = import.meta.env.VITE_DEV_TELEGRAM_USERNAME?.trim() || 'dev_user'
   const firstName = import.meta.env.VITE_DEV_TELEGRAM_FIRST_NAME?.trim() || 'Dev'
+  const languageCode =
+    import.meta.env.VITE_DEV_TELEGRAM_LANGUAGE_CODE?.trim() || undefined
 
   return {
     isTelegram: true,
@@ -106,6 +109,7 @@ function getDevMockState(): TelegramWebAppState {
       id: userId,
       first_name: firstName,
       username,
+      ...(languageCode ? { language_code: languageCode } : {}),
     },
     theme: fallbackTheme,
   }
@@ -174,4 +178,33 @@ export function enableVerticalSwipes() {
   } catch {
     // Progressive enhancement
   }
+}
+
+/**
+ * Open an external link (giveaway task link/channel) Telegram-natively when
+ * available, falling back to a new browser tab. `@channel` and bare names
+ * become t.me links; full http(s) URLs open directly.
+ *
+ * Returns false when nothing could be opened (empty value or a blocked
+ * popup), so callers can fall back to verifying immediately.
+ */
+export function openExternalLink(raw: string): boolean {
+  const value = raw.trim()
+  if (!value) return false
+  const url = /^https?:\/\//i.test(value)
+    ? value
+    : value.startsWith('@')
+      ? `https://t.me/${value.slice(1)}`
+      : `https://t.me/${value}`
+  try {
+    const webApp = window.Telegram?.WebApp
+    if (typeof webApp?.openTelegramLink === 'function') {
+      webApp.openTelegramLink(url)
+      return true
+    }
+  } catch {
+    // Fall through to window.open
+  }
+  const win = window.open(url, '_blank', 'noopener')
+  return win !== null
 }

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
+import { useDialogFocus } from '../../hooks/useDialogFocus'
+
 type BottomSheetProps = {
   isOpen: boolean
   onClose: () => void
   children: ReactNode
+  /** Accessible name announced by screen readers (e.g. product name). */
+  label?: string
   /** Optional max height as percentage of viewport (default 85) */
   maxHeightPct?: number
 }
@@ -13,12 +17,15 @@ export function BottomSheet({
   isOpen,
   onClose,
   children,
+  label = '',
   maxHeightPct = 85,
 }: BottomSheetProps) {
   const [visible, setVisible] = useState(false)
   const [animating, setAnimating] = useState(false)
   const sheetRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
+  // Move focus in, trap Tab, and restore focus on close (a11y).
+  useDialogFocus(isOpen, sheetRef)
 
   const reducedMotion =
     typeof window !== 'undefined' &&
@@ -132,6 +139,8 @@ export function BottomSheet({
         ref={sheetRef}
         role="dialog"
         aria-modal="true"
+        aria-label={label || undefined}
+        tabIndex={-1}
         className={`relative z-10 w-full max-w-md rounded-t-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(28,14,30,0.98),rgba(18,8,18,0.98))] shadow-[0_-12px_48px_rgba(0,0,0,0.4)] backdrop-blur-xl transition-transform ${
           animating ? 'translate-y-0' : 'translate-y-full'
         }`}

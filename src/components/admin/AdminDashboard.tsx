@@ -1,10 +1,16 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 
-import { AdminDashboardPanel } from './AdminDashboardPanel'
 import { AdminStatusPanel } from './AdminStatusPanel'
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
 import type { AnalyticsResult } from '../../lib/firebase/analytics'
 import type { Product } from '../../types/product'
+
+// Lazy: the dashboard pulls in recharts — only load it when the Dashboard tab
+// is actually opened (verified admins only).
+const AdminDashboardPanel = lazy(async () => {
+  const module = await import('./AdminDashboardPanel')
+  return { default: module.AdminDashboardPanel }
+})
 
 const ProductAdminPanel = lazy(async () => {
   const module = await import('../product/ProductAdminPanel')
@@ -21,6 +27,11 @@ const PromoAdminPanel = lazy(async () => {
   return { default: module.PromoAdminPanel }
 })
 
+const DiscountAdminPanel = lazy(async () => {
+  const module = await import('../product/DiscountAdminPanel')
+  return { default: module.DiscountAdminPanel }
+})
+
 const BroadcastAdminPanel = lazy(async () => {
   const module = await import('../broadcast/BroadcastAdminPanel')
   return { default: module.BroadcastAdminPanel }
@@ -29,11 +40,6 @@ const BroadcastAdminPanel = lazy(async () => {
 const CampaignAdminPanel = lazy(async () => {
   const module = await import('../campaign/CampaignAdminPanel')
   return { default: module.CampaignAdminPanel }
-})
-
-const PollAdminPanel = lazy(async () => {
-  const module = await import('../poll/PollAdminPanel')
-  return { default: module.PollAdminPanel }
 })
 
 const RewardsAdminPanel = lazy(async () => {
@@ -78,13 +84,13 @@ const ADMIN_TABS: AdminTabDef[] = [
 
 const CATALOG_SUB_TABS = [
   { key: 'products', label: 'Products' },
+  { key: 'discounts', label: 'Discounts' },
   { key: 'promos', label: 'Promos' },
 ] as const
 
 const GROWTH_SUB_TABS = [
   { key: 'campaigns', label: 'Campaigns' },
   { key: 'broadcasts', label: 'Broadcasts' },
-  { key: 'polls', label: 'Polls' },
 ] as const
 
 export function AdminDashboard({
@@ -104,8 +110,8 @@ export function AdminDashboard({
     [products],
   )
 
-  const [catalogSubTab, setCatalogSubTab] = useState<'products' | 'promos'>('products')
-  const [growthSubTab, setGrowthSubTab] = useState<'campaigns' | 'broadcasts' | 'polls'>('campaigns')
+  const [catalogSubTab, setCatalogSubTab] = useState<'products' | 'discounts' | 'promos'>('products')
+  const [growthSubTab, setGrowthSubTab] = useState<'campaigns' | 'broadcasts'>('campaigns')
 
   const handleTabSelect = useCallback(
     (tab: AdminTabDef['key']) => {
@@ -144,11 +150,13 @@ export function AdminDashboard({
 
     if (adminSubView === 'dashboard') {
       return (
-        <AdminDashboardPanel
-          products={products}
-          analytics={analytics}
-          soldCount={soldCount}
-        />
+        <Suspense fallback={<AdminPanelLoading label="Dashboard" />}>
+          <AdminDashboardPanel
+            products={products}
+            analytics={analytics}
+            soldCount={soldCount}
+          />
+        </Suspense>
       )
     }
 
@@ -166,11 +174,19 @@ export function AdminDashboard({
           <GroupTabStrip
             tabs={CATALOG_SUB_TABS}
             activeTab={catalogSubTab}
-            onSelect={(key) => setCatalogSubTab(key as 'products' | 'promos')}
+            onSelect={(key) => setCatalogSubTab(key as 'products' | 'discounts' | 'promos')}
           />
           {catalogSubTab === 'products' ? (
             <Suspense fallback={<AdminPanelLoading label="Product Admin" />}>
               <ProductAdminPanel
+                initData={initData}
+                products={products}
+                onProductsChanged={onProductsChanged}
+              />
+            </Suspense>
+          ) : catalogSubTab === 'discounts' ? (
+            <Suspense fallback={<AdminPanelLoading label="Discounts" />}>
+              <DiscountAdminPanel
                 initData={initData}
                 products={products}
                 onProductsChanged={onProductsChanged}
@@ -191,19 +207,15 @@ export function AdminDashboard({
           <GroupTabStrip
             tabs={GROWTH_SUB_TABS}
             activeTab={growthSubTab}
-            onSelect={(key) => setGrowthSubTab(key as 'campaigns' | 'broadcasts' | 'polls')}
+            onSelect={(key) => setGrowthSubTab(key as 'campaigns' | 'broadcasts')}
           />
           {growthSubTab === 'campaigns' ? (
             <Suspense fallback={<AdminPanelLoading label="Campaigns" />}>
               <CampaignAdminPanel initData={initData} />
             </Suspense>
-          ) : growthSubTab === 'broadcasts' ? (
+          ) : (
             <Suspense fallback={<AdminPanelLoading label="Broadcasts" />}>
               <BroadcastAdminPanel initData={initData} />
-            </Suspense>
-          ) : (
-            <Suspense fallback={<AdminPanelLoading label="Polls" />}>
-              <PollAdminPanel initData={initData} />
             </Suspense>
           )}
         </div>
@@ -223,8 +235,10 @@ export function AdminDashboard({
 
   return (
     <div className="pb-28">
-      {/* ── Active Management Panel ── */}
-      {renderActivePanel()}
+      {/* ── Active Management Panel (keyed so the calm fade replays per tab) ── */}
+      <div key={adminSubView} className="animate-[fade-in_0.2s_ease-out]">
+        {renderActivePanel()}
+      </div>
 
       {/* ── Session Block ── */}
       <div className="mt-4">
@@ -234,7 +248,7 @@ export function AdminDashboard({
       {/* ── Admin Bottom Navigation (only for verified admins) ── */}
       {canManageProducts ? (
         <nav className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-3 pt-2">
-          <div className="flex w-full max-w-md items-center justify-around rounded-[26px] border border-white/10 bg-[linear-gradient(135deg,rgba(35,16,37,0.96),rgba(18,10,24,0.96))] px-2 py-2 shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+          <div className="flex w-full max-w-md items-center justify-between gap-0.5 rounded-[26px] border border-white/10 bg-[linear-gradient(135deg,rgba(35,16,37,0.96),rgba(18,10,24,0.96))] px-1.5 py-2 shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-xl">
             {ADMIN_TABS.map((tab) => (
               <AdminNavButton
                 key={tab.key}
@@ -297,7 +311,7 @@ function AdminNavButton({ isActive, onClick, label, icon }: AdminNavButtonProps)
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 transition-colors ${
+      className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 py-2 transition-colors ${
         isActive
           ? 'text-[var(--shop-purple)]'
           : 'text-[var(--shop-muted)]'
@@ -350,7 +364,7 @@ function AdminNavButton({ isActive, onClick, label, icon }: AdminNavButtonProps)
           </svg>
         ) : null}
       </span>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">
+      <span className="whitespace-nowrap text-[8px] font-semibold uppercase leading-none tracking-[0.1em]">
         {label}
       </span>
     </button>

@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import { Trophy } from 'lucide-react'
 
 import { triggerHapticFeedback, triggerHapticNotification } from '../../lib/telegram/webApp'
+import { useI18n } from '../../lib/i18n'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 
 type StoreScreen =
   | 'catalog'
@@ -13,7 +15,7 @@ type StoreScreen =
   | 'checkout'
   | 'success'
   | 'rewards'
-  | 'polls'
+  | 'preferences'
   | 'privacy'
   | 'terms'
   | 'about'
@@ -37,6 +39,7 @@ type AppShellProps = {
   onOpenPrivacy: () => void
   onOpenTerms: () => void
   onOpenAbout: () => void
+  onOpenPreferences: () => void
   onTripleTap: () => void
   onWithdrawConsent?: () => Promise<void>
 }
@@ -60,13 +63,18 @@ export function AppShell({
   onOpenPrivacy,
   onOpenTerms,
   onOpenAbout,
+  onOpenPreferences,
   onTripleTap,
   onWithdrawConsent,
 }: AppShellProps) {
+  const { t } = useI18n()
   const [showSettings, setShowSettings] = useState(false)
   const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false)
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const tapTimestampsRef = useRef<number[]>([])
+  const withdrawDialogRef = useRef<HTMLDivElement>(null)
+  // Move focus in, trap Tab, restore focus on close.
+  useDialogFocus(showWithdrawConfirm, withdrawDialogRef)
   const isConsentBlocked = showConsent === true || showWithdrawConfirm
   const isNavVisible = bottomNavVisible && !isConsentBlocked
 
@@ -81,6 +89,19 @@ export function AppShell({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [showSettings])
+
+  // Close the withdraw-consent dialog on Escape (focus trap left to the
+  // native dialog semantics of the scrim + buttons below).
+  useEffect(() => {
+    if (!showWithdrawConfirm) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setShowWithdrawConfirm(false)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [showWithdrawConfirm])
 
   const handleLogoClick = useCallback(() => {
     const now = Date.now()
@@ -108,7 +129,7 @@ export function AppShell({
           <button
             type="button"
             onClick={handleLogoClick}
-            className="text-left outline-none"
+            className="rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/60"
             aria-label="YUNGWEAR (tap 3 times for admin)"
           >
             <h1 className="text-xl font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
@@ -116,9 +137,9 @@ export function AppShell({
             </h1>
             {/* Online users count - animated */}
             {onlineUsersCount > 0 && (
-              <p className="mt-0.5 text-[10px] font-semibold tracking-[0.12em] text-emerald-400/80 animate-pulse">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1.5 align-middle" />
-                online users: {onlineUsersCount}
+              <p className="mt-0.5 text-[11px] font-semibold tracking-[0.12em] text-[var(--shop-magenta)]/90 animate-pulse">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--shop-magenta)] mr-1.5 align-middle" />
+                {t('shell.onlineUsers')} {onlineUsersCount}
               </p>
             )}
           </button>
@@ -131,7 +152,7 @@ export function AppShell({
                 triggerHapticFeedback('light')
                 setShowSettings((prev) => !prev)
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-zinc-400 transition-colors hover:bg-white/10 hover:text-[var(--shop-cream)]"
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-zinc-400 transition-colors hover:bg-white/10 hover:text-[var(--shop-cream)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/60"
               aria-label="Settings & Legal"
             >
               <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 flex-shrink-0" aria-hidden="true">
@@ -153,7 +174,20 @@ export function AppShell({
                   onClick={() => setShowSettings(false)}
                   aria-hidden="true"
                 />
-                <div className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                <div className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[var(--shop-dropdown)] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettings(false)
+                      onOpenPreferences()
+                    }}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-zinc-300 transition-colors hover:bg-white/8"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
+                    </svg>
+                    {t('settings.preferences')}
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -171,7 +205,7 @@ export function AppShell({
                         />
                       </g>
                     </svg>
-                    About & Contact
+                    {t('settings.about')}
                   </button>
                   <button
                     type="button"
@@ -190,7 +224,7 @@ export function AppShell({
                         />
                       </g>
                     </svg>
-                    Privacy Policy
+                    {t('settings.privacy')}
                   </button>
                   <button
                     type="button"
@@ -209,7 +243,7 @@ export function AppShell({
                         />
                       </g>
                     </svg>
-                    Terms of Service
+                    {t('settings.terms')}
                   </button>
 
                   {/* Separator */}
@@ -232,7 +266,7 @@ export function AppShell({
                         />
                       </g>
                     </svg>
-                    Revoke Consent
+                    {t('settings.revokeConsent')}
                   </button>
                 </div>
               </>
@@ -247,7 +281,14 @@ export function AppShell({
                   aria-hidden="true"
                 />
                 <div className="fixed inset-x-4 bottom-8 z-50 mx-auto max-w-md animate-[fade-slide-in_0.3s_ease-out]">
-                  <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(28,14,34,0.98),rgba(18,10,24,0.98))] p-5 shadow-[0_-12px_48px_rgba(0,0,0,0.4)]">
+                  <div
+                    ref={withdrawDialogRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="withdraw-consent-title"
+                    tabIndex={-1}
+                    className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(28,14,34,0.98),rgba(18,10,24,0.98))] p-5 shadow-[0_-12px_48px_rgba(0,0,0,0.4)]"
+                  >
                     {/* Handle bar */}
                     <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/20" />
 
@@ -258,13 +299,14 @@ export function AppShell({
                       </svg>
                     </div>
 
-                    <h3 className="text-center text-lg font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
-                      Revoke Consent
+                    <h3
+                      id="withdraw-consent-title"
+                      className="text-center text-lg font-bold tracking-[-0.03em] text-[var(--shop-cream)]"
+                    >
+                      {t('withdraw.title')}
                     </h3>
                     <p className="mt-2 text-center text-sm leading-6 text-zinc-400">
-                      This will withdraw your acceptance of the Privacy Policy and Terms of Service.
-                      Your existing orders and data are not automatically deleted, but we will no longer
-                      process new data based on consent. You can accept again at any time.
+                      {t('withdraw.body')}
                     </p>
 
                     <div className="mt-5 flex gap-3">
@@ -274,7 +316,7 @@ export function AppShell({
                         disabled={isWithdrawing}
                         className="flex-1 rounded-xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)] transition-colors disabled:opacity-40"
                       >
-                        Cancel
+                        {t('withdraw.cancel')}
                       </button>
                       <button
                         type="button"
@@ -294,7 +336,7 @@ export function AppShell({
                         disabled={isWithdrawing}
                         className="flex-1 rounded-xl bg-[var(--shop-red)] px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-white transition-opacity disabled:opacity-50"
                       >
-                        {isWithdrawing ? 'Revoking...' : 'Revoke'}
+                        {isWithdrawing ? t('withdraw.revoking') : t('withdraw.revoke')}
                       </button>
                     </div>
                   </div>
@@ -310,14 +352,14 @@ export function AppShell({
       {/* Fixed bottom navigation — completely unmounted when consent is blocked or withdraw dialog is open */}
       {isNavVisible && !isModalOpen && (
         <nav className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-3 pt-2">
-        <div className="flex w-full max-w-md items-center justify-around rounded-[26px] border border-white/10 bg-[linear-gradient(135deg,rgba(35,16,37,0.96),rgba(18,10,24,0.96))] px-2 py-2 shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+        <div className="flex w-full max-w-md items-center rounded-[26px] border border-white/10 bg-[linear-gradient(135deg,rgba(35,16,37,0.96),rgba(18,10,24,0.96))] px-2 py-2 shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-xl">
             <BottomNavButton
               isActive={storeScreen === 'catalog' || storeScreen === 'product' || storeScreen === 'likes'}
               onClick={() => {
                 triggerHapticFeedback('light')
                 onOpenCatalog()
               }}
-              label="Browse"
+              label={t('nav.browse')}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 flex-shrink-0" aria-hidden="true">
                 <g transform="translate(2, 2)">
@@ -336,7 +378,7 @@ export function AppShell({
                 triggerHapticFeedback('light')
                 onOpenLikes()
               }}
-              label="Liked"
+              label={t('nav.liked')}
               count={likedCount}
               badgeVariant={hasUnreadLikes ? 'brand' : 'muted'}
             >
@@ -360,7 +402,7 @@ export function AppShell({
                 triggerHapticFeedback('light')
                 onOpenRewards()
               }}
-              label="Rewards"
+              label={t('nav.rewards')}
             >
               <Trophy
                 className="w-5 h-5 flex-shrink-0"
@@ -375,7 +417,7 @@ export function AppShell({
                 triggerHapticFeedback('light')
                 onOpenOrders()
               }}
-              label="Orders"
+              label={t('nav.orders')}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 flex-shrink-0" aria-hidden="true">
                 <g transform="translate(2, 2)">
@@ -394,7 +436,7 @@ export function AppShell({
                 triggerHapticFeedback('light')
                 onOpenCart()
               }}
-              label="Cart"
+              label={t('nav.cart')}
               count={cartCount}
             >
               <svg
@@ -441,7 +483,7 @@ function BottomNavButton({
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 transition-colors ${
+      className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 transition-colors ${
         isActive
           ? 'text-white'
           : 'text-[var(--shop-muted)]'
@@ -449,14 +491,17 @@ function BottomNavButton({
       aria-label={`${label}${count != null && count > 0 ? ` (${count})` : ''}`}
     >
       {children}
-      <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">
+      {/* 9px on legacy 320px widths, 10px on normal phones, 11px on wide ones.
+          flex-1 + min-w-0 slots let long translated words (e.g. ПОНРАВИЛОСЬ,
+          PASŪTĪJUMI) ellipsize instead of overflowing the pill. */}
+      <span className="block w-full truncate text-[9px] min-[360px]:text-[10px] min-[400px]:text-[11px] font-semibold uppercase tracking-[0.08em]">
         {label}
       </span>
       {count != null && count > 0 ? (
         <span
           className={`absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white transition-colors duration-300 ${
             badgeVariant === 'brand'
-              ? 'bg-[#E61E26]'
+              ? 'bg-[var(--shop-like)]'
               : 'bg-zinc-700'
           }`}
         >

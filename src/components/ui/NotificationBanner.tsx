@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { useI18n } from '../../lib/i18n'
+
 type NotificationBannerProps = {
   message: string | null
   onClose: () => void
@@ -11,6 +13,7 @@ export function NotificationBanner({
   onClose,
   durationMs = 4000,
 }: NotificationBannerProps) {
+  const { t } = useI18n()
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
@@ -84,7 +87,7 @@ export function NotificationBanner({
             }, 300)
           }}
           className="-mr-1 -mt-1 rounded-full p-1 text-white/50 transition-colors hover:bg-white/10 hover:text-white/80"
-          aria-label="Dismiss notification"
+          aria-label={t('notification.dismissAria')}
         >
           <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 shrink-0">
             <g transform="translate(4, 4)">

@@ -1,11 +1,13 @@
 import {
   formatBuyerMeetupLocation,
   formatBuyerMeetupTime,
-  formatOrderStatus,
+  getOrderStatusTranslationKey,
   getBuyerOrderProgressSteps,
   getBuyerOrderStatusHint,
   getOrderStatusBadgeClassName,
 } from '../../lib/orderStatus'
+import { useI18n } from '../../lib/i18n'
+import { formatDateTime } from '../../lib/i18n/locale'
 import type { Order } from '../../types/order'
 
 type BuyerOrderDrawerProps = {
@@ -16,6 +18,7 @@ type BuyerOrderDrawerProps = {
 import { useEffect, useState } from 'react'
 
 export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
+  const { t, language } = useI18n()
   const [isOpen, setIsOpen] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
 
@@ -42,7 +45,7 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
           isOpen && !isClosing ? 'opacity-100' : 'opacity-0'
         }`}
         style={{ backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
-        aria-label="Close order detail"
+        aria-label={t('od.closeAria')}
       />
       {/* Sheet panel */}
       <article
@@ -53,7 +56,7 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Order Detail
+              {t('od.title')}
             </p>
             <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[var(--shop-cream)]">
               {order.items.map((item) => item.name).join(', ')}
@@ -62,9 +65,9 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
+            className="rounded-full border border-white/10 bg-white/8 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]"
           >
-            Close
+            {t('od.close')}
           </button>
         </div>
 
@@ -72,20 +75,20 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
           <span
             className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${getOrderStatusBadgeClassName(order.status)}`}
           >
-            {formatOrderStatus(order.status)}
+            {t(getOrderStatusTranslationKey(order.status))}
           </span>
           <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-            {order.fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup'}
+            {order.fulfillmentType === 'delivery' ? t('co.delivery') : t('co.meetup')}
           </span>
           <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-            {order.paymentMethod === 'usdt' ? 'USDT' : 'Meetup Cash'}
+            {order.paymentMethod === 'usdt' ? t('co.usdt') : t('co.meetupCash')}
           </span>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
           <div className="rounded-[20px] border border-white/10 bg-white/6 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
-              Total
+              {t('od.total')}
             </p>
             <p className="mt-2 text-lg font-semibold text-[var(--shop-cream)]">
               {order.total} EUR
@@ -93,20 +96,20 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
           </div>
           <div className="rounded-[20px] border border-white/10 bg-white/6 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
-              Created
+              {t('od.created')}
             </p>
             <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
-              {order.createdAt ? order.createdAt.toLocaleString() : 'Pending server timestamp'}
+              {order.createdAt ? formatDateTime(language, order.createdAt) : t('od.pendingTimestamp')}
             </p>
           </div>
         </div>
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-white/6 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Progress
+            {t('od.progress')}
           </p>
           <div className="mt-4 grid grid-cols-4 gap-3">
-            {getBuyerOrderProgressSteps(order).map((step) => (
+            {getBuyerOrderProgressSteps(order, t).map((step) => (
               <div key={step.key} className="space-y-2">
                 <div
                   className={`h-1.5 rounded-full ${
@@ -131,49 +134,49 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-white/6 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Status Note
+            {t('od.statusNote')}
           </p>
           <p className="mt-2 text-sm leading-6 text-[var(--shop-cream)]">
-            {getBuyerOrderStatusHint(order)}
+            {getBuyerOrderStatusHint(order, t)}
           </p>
         </div>
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-white/6 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Order Snapshot
+            {t('od.orderSnapshot')}
           </p>
           <div className="mt-3 space-y-2 text-sm text-[var(--shop-muted)]">
             <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Order ID:</span>{' '}
+              <span className="font-semibold text-[var(--shop-cream)]">{t('od.orderId')}</span>{' '}
               {order.id}
             </p>
             <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Buyer:</span>{' '}
+              <span className="font-semibold text-[var(--shop-cream)]">{t('od.buyer')}</span>{' '}
               {order.fullName}
             </p>
             <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Telegram:</span>{' '}
+              <span className="font-semibold text-[var(--shop-cream)]">{t('od.telegram')}</span>{' '}
               {order.telegramHandle}
             </p>
             <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Subtotal:</span>{' '}
+              <span className="font-semibold text-[var(--shop-cream)]">{t('od.subtotal')}</span>{' '}
               {order.subtotal} EUR
             </p>
             <p>
-              <span className="font-semibold text-[var(--shop-cream)]">Promo:</span>{' '}
+              <span className="font-semibold text-[var(--shop-cream)]">{t('od.promo')}</span>{' '}
               {order.appliedPromo
                 ? `${order.appliedPromo.code} (-${order.appliedPromo.discountAmount} EUR)`
-                : 'No promo'}
+                : t('od.noPromo')}
             </p>
             {order.note ? (
               <p>
-                <span className="font-semibold text-[var(--shop-cream)]">Buyer Note:</span>{' '}
+                <span className="font-semibold text-[var(--shop-cream)]">{t('od.buyerNote')}</span>{' '}
                 {order.note}
               </p>
             ) : null}
             {order.cancelReason ? (
               <p>
-                <span className="font-semibold text-[var(--shop-cream)]">Cancel Reason:</span>{' '}
+                <span className="font-semibold text-[var(--shop-cream)]">{t('od.cancelReason')}</span>{' '}
                 {order.cancelReason}
               </p>
             ) : null}
@@ -182,41 +185,41 @@ export function BuyerOrderDrawer({ order, onClose }: BuyerOrderDrawerProps) {
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-white/6 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            Fulfillment Detail
+            {t('od.fulfillmentDetail')}
           </p>
           <div className="mt-3 space-y-2 text-sm text-[var(--shop-muted)]">
             {order.fulfillmentType === 'delivery' ? (
               <>
                 <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">City:</span>{' '}
-                  {order.deliveryCity || 'Not provided'}
+                  <span className="font-semibold text-[var(--shop-cream)]">{t('od.city')}</span>{' '}
+                  {order.deliveryCity || t('od.notProvided')}
                 </p>
                 <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">Address:</span>{' '}
-                  {order.deliveryAddress || 'Not provided'}
+                  <span className="font-semibold text-[var(--shop-cream)]">{t('od.address')}</span>{' '}
+                  {order.deliveryAddress || t('od.notProvided')}
                 </p>
                 <p>
                   <span className="font-semibold text-[var(--shop-cream)]">
-                    Delivery Notes:
+                    {t('od.deliveryNotes')}
                   </span>{' '}
-                  {order.deliveryNotes || 'No delivery notes'}
+                  {order.deliveryNotes || t('od.noDeliveryNotes')}
                 </p>
               </>
             ) : (
               <>
                 <p>
                   <span className="font-semibold text-[var(--shop-cream)]">
-                    Meetup Location:
+                    {t('od.meetupLocation')}
                   </span>{' '}
-                  {formatBuyerMeetupLocation(order.meetupLocation)}
+                  {formatBuyerMeetupLocation(order.meetupLocation, t)}
                 </p>
                 <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">Meetup Time:</span>{' '}
-                  {formatBuyerMeetupTime(order.meetupTimeOption)}
+                  <span className="font-semibold text-[var(--shop-cream)]">{t('od.meetupTime')}</span>{' '}
+                  {formatBuyerMeetupTime(order.meetupTimeOption, t)}
                 </p>
                 <p>
-                  <span className="font-semibold text-[var(--shop-cream)]">Meetup Notes:</span>{' '}
-                  {order.meetupNotes || 'No meetup notes'}
+                  <span className="font-semibold text-[var(--shop-cream)]">{t('od.meetupNotes')}</span>{' '}
+                  {order.meetupNotes || t('od.noMeetupNotes')}
                 </p>
               </>
             )}

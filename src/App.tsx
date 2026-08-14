@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { disableVerticalSwipes } from './lib/telegram/webApp'
 import { AddToCartAnimationProvider } from './hooks/useAddToCartAnimation'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
+import { LanguageProvider } from './lib/i18n'
 import { HomePage } from './pages/HomePage'
 
 function App() {
@@ -25,9 +26,11 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <AddToCartAnimationProvider>
-        <HomePage />
-      </AddToCartAnimationProvider>
+      <LanguageProvider>
+        <AddToCartAnimationProvider>
+          <HomePage />
+        </AddToCartAnimationProvider>
+      </LanguageProvider>
     </ErrorBoundary>
   )
 }

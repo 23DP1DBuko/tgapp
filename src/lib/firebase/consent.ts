@@ -94,9 +94,18 @@ export async function acceptTerms(
 
 // ── Check if user has accepted terms ──
 
+/**
+ * Tri-state consent check (M5):
+ * - `'accepted'` — the server confirms consent was given
+ * - `'not-accepted'` — the server confirms consent was NOT given
+ * - `'error'` — the status could not be determined (network / server error)
+ *
+ * Callers must treat `'error'` as NOT accepted and fail closed (keep the store
+ * blocked behind the consent screen) — never open the store on a failed check.
+ */
 export async function checkTermsAccepted(
   initData: string,
-): Promise<boolean> {
+): Promise<'accepted' | 'not-accepted' | 'error'> {
   try {
     const response = await fetch(
       import.meta.env.VITE_USER_CONSENT_URL ?? DEFAULT_CONSENT_URL,
@@ -107,12 +116,12 @@ export async function checkTermsAccepted(
       },
     )
 
-    if (!response.ok) return false
+    if (!response.ok) return 'error'
 
     const result = (await response.json()) as UserSettingsResult
-    return result.hasAcceptedTerms === true
+    return result.hasAcceptedTerms === true ? 'accepted' : 'not-accepted'
   } catch {
-    return false
+    return 'error'
   }
 }
 

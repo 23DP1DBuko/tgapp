@@ -20,6 +20,7 @@ export type CheckoutForm = {
   deliveryNotes: string
   meetupLocation: string
   meetupTimeOption: string
+  meetupTimeCustom: string
   meetupNotes: string
 }
 

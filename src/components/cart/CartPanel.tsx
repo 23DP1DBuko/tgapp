@@ -1,28 +1,49 @@
 import { useEffect, useState } from 'react'
 
-import { animate, motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react'
-
 import { triggerHapticFeedback } from '../../lib/telegram/webApp'
+import { useReducedMotion } from '../../hooks/useReducedMotion'
+import { useSwipeToDismiss } from '../../hooks/useSwipeToDismiss'
 import { SwipeablePanel } from '../ui/SwipeablePanel'
+import { useI18n } from '../../lib/i18n'
 import type { CartItem } from '../../types/cart'
 
 type CartPanelProps = {
   items: CartItem[]
-  onRemoveItem: (productId: string) => void
+  onRemoveItem: (productId: string) => Promise<CartItem | null>
+  onRestoreItem: (item: CartItem) => void
   onContinueShopping: () => void
   onProceedToCheckout: () => void
 }
 
 const DELETE_REVEAL_WIDTH = 100
+const DELETE_SWIPE_THRESHOLD = 80
+const UNDO_WINDOW_MS = 5000
 
 export function CartPanel({
   items,
   onRemoveItem,
+  onRestoreItem,
   onContinueShopping,
   onProceedToCheckout,
 }: CartPanelProps) {
+  const { t } = useI18n()
   const total = items.reduce((sum, item) => sum + item.price, 0)
-  const [openItemId, setOpenItemId] = useState<string | null>(null)
+
+  // ── Swipe-delete undo: keep the last removed item for UNDO_WINDOW_MS ──
+  const [lastRemoved, setLastRemoved] = useState<CartItem | null>(null)
+
+  useEffect(() => {
+    if (!lastRemoved) return
+    const timer = window.setTimeout(() => setLastRemoved(null), UNDO_WINDOW_MS)
+    return () => window.clearTimeout(timer)
+  }, [lastRemoved])
+
+  async function handleRemove(item: CartItem) {
+    const removed = await onRemoveItem(item.productId)
+    if (removed) {
+      setLastRemoved(removed)
+    }
+  }
 
   // Hide the native Telegram MainButton when cart is mounted
   useEffect(() => {
@@ -38,39 +59,20 @@ export function CartPanel({
     onProceedToCheckout()
   }
 
-  function closeOpenItem() {
-    setOpenItemId(null)
-  }
-
   return (
     <SwipeablePanel onDismiss={onContinueShopping} threshold={140}>
       <div className="animate-[fade-slide-in_0.4s_ease-out_backwards]">
         <article className="rounded-[32px] border border-white/10 bg-[var(--shop-panel)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Cart
+              {t('cart.title')}
             </p>
             <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-cream)]">
-              {items.length} {items.length === 1 ? 'Item' : 'Items'}
+              {items.length} {items.length === 1 ? t('cart.itemOne') : t('cart.itemMany')}
             </span>
           </div>
 
           <div className="relative mt-5 space-y-3">
-            {/* ── Backdrop overlay when a card is open (tap anywhere to close) ── */}
-            <AnimatePresence>
-              {openItemId !== null && (
-                <motion.div
-                  key="swipe-backdrop"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  onClick={closeOpenItem}
-                  className="absolute inset-0 z-10"
-                />
-              )}
-            </AnimatePresence>
-
             {items.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl bg-white/8 px-6 py-14 text-center">
                 {/* Large muted shopping bag icon */}
@@ -83,11 +85,11 @@ export function CartPanel({
                 </div>
                 {/* High-contrast title */}
                 <p className="animate-[fade-slide-in_0.4s_ease-out_backwards] text-sm font-bold uppercase tracking-[0.2em] text-zinc-300" style={{ animationDelay: '100ms' }}>
-                  YOUR BAG IS EMPTY
+                  {t('cart.emptyTitle')}
                 </p>
                 {/* Subtext */}
                 <p className="animate-[fade-slide-in_0.4s_ease-out_backwards] mt-2 text-xs leading-relaxed text-zinc-500" style={{ animationDelay: '200ms' }}>
-                  Looks like you haven&apos;t added any clothing pieces to your drop selection yet.
+                  {t('cart.emptyBody')}
                 </p>
               </div>
             ) : null}
@@ -96,12 +98,40 @@ export function CartPanel({
               <CartItemRow
                 key={item.productId}
                 item={item}
-                isOpen={openItemId === item.productId}
-                onOpen={() => setOpenItemId(item.productId)}
-                onClose={() => setOpenItemId(null)}
-                onRemove={onRemoveItem}
+                onRemove={() => void handleRemove(item)}
               />
             ))}
+
+            {/* Swipe hint */}
+            {items.length > 0 ? (
+              <p className="pt-1 text-center text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]/60">
+                {t('cart.swipeHint')}
+              </p>
+            ) : null}
+
+            {/* Undo pill — inline, above the totals so it never overlays the checkout button */}
+            {lastRemoved ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="animate-[fade-slide-in_0.25s_ease-out] flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/8 px-4 py-3"
+              >
+                <p className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+                  {t('cart.removed')}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHapticFeedback('medium')
+                    onRestoreItem(lastRemoved)
+                    setLastRemoved(null)
+                  }}
+                  className="shrink-0 rounded-xl bg-[var(--shop-purple)] px-4 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-white transition-colors active:scale-95"
+                >
+                  {t('cart.undo')}
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {/* ── Totals summary ── */}
@@ -109,13 +139,13 @@ export function CartPanel({
             <div className="mt-5 space-y-3 rounded-[24px] border border-white/10 bg-white/6 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Pieces
+                  {t('cart.pieces')}
                 </span>
                 <span className="text-sm font-semibold text-[var(--shop-cream)]">{items.length}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Total
+                  {t('cart.total')}
                 </span>
                 <span className="text-sm font-semibold text-[var(--shop-cream)]">{total} EUR</span>
               </div>
@@ -130,7 +160,7 @@ export function CartPanel({
                 onClick={handleCheckout}
                 className="flex w-full items-center justify-between rounded-[28px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-6 py-4 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_28px_rgba(139,61,255,0.3)] transition-all active:scale-[0.97]"
               >
-                <span>Checkout</span>
+                <span>{t('cart.checkout')}</span>
                 <span className="flex items-center gap-2">
                   <span className="tabular-nums">€{total}</span>
                   <svg
@@ -150,61 +180,91 @@ export function CartPanel({
               </button>
             </div>
           ) : null}
-        </article>
-      </div>
-    </SwipeablePanel>
+          </article>
+        </div>
+      </SwipeablePanel>
   )
 }
 
-// ─── Cart Item Row (uses motion value hooks per item) ───
+// ─── Cart Item Row (swipe left past threshold to delete) ───
 
 type CartItemRowProps = {
   item: CartItem
-  isOpen: boolean
-  onOpen: () => void
-  onClose: () => void
-  onRemove: (productId: string) => void
+  onRemove: () => void
 }
 
-function CartItemRow({
-  item,
-  isOpen,
-  onOpen,
-  onClose,
-  onRemove,
-}: CartItemRowProps) {
-  const x = useMotionValue(0)
-  const deleteOpacity = useTransform(x, [-0, -45, -90], [0, 0.5, 1])
+function CartItemRow({ item, onRemove }: CartItemRowProps) {
+  const { t } = useI18n()
+  const reducedMotion = useReducedMotion()
+  const [dragging, setDragging] = useState(false)
 
-  // Animate x position with spring when isOpen changes
+  // The x-axis swipe does not capture the pointer, so a gesture can end outside
+  // this element — make sure the dragging flag (which disables the snap-back
+  // transition) always gets cleared on release.
   useEffect(() => {
-    const controls = animate(x, isOpen ? -DELETE_REVEAL_WIDTH : 0, {
-      type: 'spring',
-      stiffness: 350,
-      damping: 35,
-      mass: 0.8,
-    })
-    return controls.stop
-  }, [isOpen, x])
+    function handleWindowPointerUp() {
+      setDragging(false)
+    }
+    window.addEventListener('pointerup', handleWindowPointerUp)
+    window.addEventListener('pointercancel', handleWindowPointerUp)
+    return () => {
+      window.removeEventListener('pointerup', handleWindowPointerUp)
+      window.removeEventListener('pointercancel', handleWindowPointerUp)
+    }
+  }, [])
+
+  const { swipeDistance, handlers } = useSwipeToDismiss({
+    axis: 'x',
+    threshold: DELETE_SWIPE_THRESHOLD,
+    onDismiss: () => {
+      triggerHapticFeedback('medium')
+      onRemove()
+    },
+  })
+
+  // Red layer fades in as the row is pulled left; fully revealed at DELETE_REVEAL_WIDTH
+  const deleteOpacity = Math.min(swipeDistance / DELETE_REVEAL_WIDTH, 1)
+  // The delete button only becomes tappable once the red layer is actually
+  // revealed — while hidden it must not intercept touches (it sits over the
+  // right 100px of the row and would otherwise eat swipes and register taps).
+  // Half the reveal width means the button is visibly out from under the card
+  // before its full rect activates.
+  const deleteButtonEnabled = swipeDistance >= DELETE_REVEAL_WIDTH / 2
+
+  function startDrag(event: React.PointerEvent<HTMLDivElement>) {
+    setDragging(true)
+    handlers.onPointerDown(event)
+  }
+
+  function endDrag(event: React.PointerEvent<HTMLDivElement>) {
+    handlers.onPointerUp(event)
+    setDragging(false)
+  }
+
+  function cancelDrag(event: React.PointerEvent<HTMLDivElement>) {
+    handlers.onPointerCancel(event)
+    setDragging(false)
+  }
 
   return (
     <div className="relative overflow-hidden rounded-[24px]">
-      {/* Hidden delete action — opacity mapped to drag x position via useTransform.
-          At x=0  → opacity=0  (fully hidden — no red bleed-through on render)
-          At x=-45 → opacity=0.5 (partially visible)
-          At x=-100 → opacity=1.0 (fully revealed) */}
-      <motion.div
+      {/* Hidden delete action — opacity mapped to swipe progress.
+          Past DELETE_SWIPE_THRESHOLD the row removes itself on release.
+          pointer-events-none lets touches fall through to the card until the
+          row is actually dragged; only then does the Delete button activate. */}
+      <div
         style={{ opacity: deleteOpacity }}
-        className="absolute inset-y-0 right-0 flex w-[100px] items-center justify-center rounded-r-[24px] bg-[var(--shop-red)]/90"
+        className="pointer-events-none absolute inset-y-0 right-0 flex w-[100px] items-center justify-center rounded-r-[24px] bg-[var(--shop-red)]/90"
       >
         <button
           type="button"
           onClick={() => {
             triggerHapticFeedback('medium')
-            onRemove(item.productId)
-            onClose()
+            onRemove()
           }}
-          className="flex items-center gap-1.5 rounded-full bg-black/25 px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-white backdrop-blur-sm transition-colors active:scale-95"
+          className={`flex items-center gap-1.5 rounded-full bg-black/25 px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-white backdrop-blur-sm transition-colors active:scale-95 ${
+            deleteButtonEnabled ? 'pointer-events-auto' : 'pointer-events-none'
+          }`}
         >
           <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 flex-shrink-0" aria-hidden="true">
           <g transform="translate(2, 2)">
@@ -213,35 +273,32 @@ function CartItemRow({
           
           </g>
         </svg>
-          Delete
+          {t('cart.delete')}
         </button>
-      </motion.div>
+      </div>
 
-      {/* Draggable card — position tracked by useMotionValue for opacity mapping */}
-      <motion.div
-        drag="x"
-        dragConstraints={{ left: -DELETE_REVEAL_WIDTH, right: 0 }}
-        dragElastic={0.08}
-        style={{ x, touchAction: 'pan-y' }}
-        onDragEnd={(_event, info) => {
-          if (info.offset.x < -50 || info.velocity.x < -200) {
-            onOpen()
-          } else {
-            onClose()
-          }
-        }}
+      {/* Draggable card — translateX driven by the swipe hook; snap-back on cancel */}
+      <div
+        onPointerDown={startDrag}
+        onPointerMove={handlers.onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={cancelDrag}
         className="relative z-0 rounded-[24px]"
+        style={{
+          transform: `translateX(${-swipeDistance}px)`,
+          transition: dragging || reducedMotion
+            ? 'none'
+            : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)',
+          touchAction: 'pan-y',
+        }}
       >
-        <div
-          onClick={() => { if (isOpen) onClose() }}
-          className="flex cursor-default items-center gap-3 rounded-[24px] border border-white/10 bg-white/6 p-3 select-none"
-        >
+        <div className="flex cursor-default items-center gap-3 rounded-[24px] border border-white/10 bg-white/6 p-3 select-none">
           <div className="h-16 w-14 shrink-0 overflow-hidden rounded-2xl bg-black/20">
             {item.image ? (
               <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover pointer-events-none select-none" draggable={false} />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-                No Img
+                {t('cart.noImg')}
               </div>
             )}
           </div>
@@ -253,7 +310,7 @@ function CartItemRow({
             </p>
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   )
 }

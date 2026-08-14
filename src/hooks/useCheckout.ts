@@ -1,6 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { createOrder } from '../lib/firebase/orders'
+import { createOrder, CreateOrderError } from '../lib/firebase/orders'
+import {
+  readStoredSessionJson,
+  writeStoredSessionJson,
+  removeStoredSessionValue,
+} from '../lib/storage'
+import { EARLY_ACCESS_REFERRAL_THRESHOLD, referralFriendsWord } from '../lib/earlyAccess'
+import { translate } from '../lib/i18n/translate'
+import type { TranslationKey } from '../lib/i18n/translations'
 import type {
   CheckoutForm,
   CheckoutSubmitState,
@@ -13,7 +21,7 @@ import type { TelegramUser } from '../lib/telegram/webApp'
 export type UseCheckoutOptions = {
   user: TelegramUser | undefined
   initData: string
-  requireTelegramAccess: (action: string) => boolean
+  requireTelegramAccess: (actionKey: TranslationKey) => boolean
   cartItems: CartItem[]
   checkoutSubtotal: number
   appliedPromo: AppliedPromo | null
@@ -46,6 +54,83 @@ export type UseCheckoutResult = {
   setCheckoutError: React.Dispatch<React.SetStateAction<string | null>>
 }
 
+const CHECKOUT_DRAFT_KEY = 'yungwear-checkout-draft'
+const CHECKOUT_IDEMPOTENCY_KEY = 'yungwear-checkout-idempotency-key'
+
+/** Fresh client-side idempotency key (UUID when available). */
+function createClientOrderId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+/**
+ * Reuse the persisted key across retries so a refresh / double-tap after a
+ * lost response maps to the same order (M4); mint a fresh one only if absent.
+ */
+function getOrCreateClientOrderId(): string {
+  const persisted = readStoredSessionJson<string>(CHECKOUT_IDEMPOTENCY_KEY, '')
+  if (/^[A-Za-z0-9_-]{8,80}$/.test(persisted)) {
+    return persisted
+  }
+  const next = createClientOrderId()
+  writeStoredSessionJson(CHECKOUT_IDEMPOTENCY_KEY, next)
+  return next
+}
+
+/** Backend checkout rejection reasons we translate; anything else falls back. */
+const CHECKOUT_REASON_KEYS: Partial<Record<string, TranslationKey>> = {
+  product_unavailable: 'coError.productUnavailable',
+  giveaway_prize: 'coError.giveawayPrize',
+  promo_exhausted: 'coError.promoExhausted',
+  promo_invalid: 'coError.promoInvalid',
+  promo_inactive: 'coError.promoInactive',
+  promo_expired: 'coError.promoExpired',
+  drop_not_started: 'coError.dropNotStarted',
+  invalid_init_data: 'coError.sessionExpired',
+  expired_init_data: 'coError.sessionExpired',
+}
+
+/** Localized early-access rejection with the threshold interpolated. */
+function translateEarlyAccessRestricted(): string {
+  return translate('coError.earlyAccessRestricted', {
+    needed: EARLY_ACCESS_REFERRAL_THRESHOLD,
+    friends: referralFriendsWord(),
+  })
+}
+
+/** Map a checkout failure to a localized, actionable message. */
+function translateCheckoutError(error: unknown): string {
+  if (error instanceof CreateOrderError) {
+    if (error.reason === 'early_access_restricted') {
+      return translateEarlyAccessRestricted()
+    }
+    const key = CHECKOUT_REASON_KEYS[error.reason]
+    if (key) return translate(key)
+  }
+  return error instanceof Error ? error.message : translate('coError.failedSold')
+}
+
+/** Fresh checkout form, prefilled from the Telegram user where possible. */
+function checkoutDefaults(user: TelegramUser | undefined): CheckoutForm {
+  return {
+    fullName: `${user?.first_name ?? ''}${user?.last_name ? ` ${user.last_name}` : ''}`.trim(),
+    telegramHandle: user?.username ? `@${user.username}` : '',
+    note: '',
+    promoCode: '',
+    fulfillmentType: 'meetup',
+    paymentMethod: 'meetup_cash',
+    deliveryCity: '',
+    deliveryAddress: '',
+    deliveryNotes: '',
+    meetupLocation: '',
+    meetupTimeOption: '',
+    meetupTimeCustom: '',
+    meetupNotes: '',
+  }
+}
+
 export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   const {
     user,
@@ -66,19 +151,21 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
     initialSuccessSnapshot,
   } = options
 
-  const [checkoutForm, setCheckoutForm] = useState<CheckoutForm>({
-    fullName: `${user?.first_name ?? ''}${user?.last_name ? ` ${user.last_name}` : ''}`.trim(),
-    telegramHandle: user?.username ? `@${user.username}` : '',
-    note: '',
-    promoCode: '',
-    fulfillmentType: 'meetup',
-    paymentMethod: 'meetup_cash',
-    deliveryCity: '',
-    deliveryAddress: '',
-    deliveryNotes: '',
-    meetupLocation: '',
-    meetupTimeOption: '',
-    meetupNotes: '',
+  // Restore an in-progress draft over the Telegram prefill. The promo code is
+  // always cleared on restore: it isn't re-validated until the user applies it.
+  const [checkoutForm, setCheckoutForm] = useState<CheckoutForm>(() => {
+    const defaults = checkoutDefaults(user)
+    // Whitelist restore: only known string fields are copied back, so a
+    // malformed or legacy draft can never inject unknown keys or shapes.
+    const draft = readStoredSessionJson<Partial<Record<keyof CheckoutForm, string>>>(CHECKOUT_DRAFT_KEY, {})
+    const safeDraft: Partial<CheckoutForm> = {}
+    for (const key of Object.keys(defaults) as (keyof CheckoutForm)[]) {
+      const value = draft[key]
+      if (typeof value === 'string') {
+        ;(safeDraft as Record<string, unknown>)[key] = value
+      }
+    }
+    return { ...defaults, ...safeDraft, promoCode: '' }
   })
   const [checkoutSubmitted, setCheckoutSubmitted] = useState(initialCheckoutSubmitted)
   const [checkoutSubmitState, setCheckoutSubmitState] =
@@ -89,7 +176,15 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   const [checkoutSuccessSnapshot, setCheckoutSuccessSnapshot] =
     useState<CheckoutSuccessSnapshot | null>(initialSuccessSnapshot)
 
-  const telegramUserLabel = useMemo(() => {
+  // Draft persistence: keep typed fields across interruptions (app switch /
+  // reload). Never save while the success screen is showing.
+  useEffect(() => {
+    if (checkoutSubmitted) return
+    writeStoredSessionJson(CHECKOUT_DRAFT_KEY, checkoutForm)
+  }, [checkoutForm, checkoutSubmitted])
+
+  // Computed per render so they follow language changes.
+  const telegramUserLabel = (() => {
     if (user?.username) {
       return `@${user.username}`
     }
@@ -99,23 +194,23 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
     }
 
     if (user?.id) {
-      return `Telegram user ${user.id}`
+      return translate('coUserLabel.telegramUser', { id: user.id })
     }
 
-    return 'Open in Telegram to connect your account'
-  }, [user])
+    return translate('coUserLabel.openTelegram')
+  })()
 
-  const telegramContactHint = useMemo(() => {
+  const telegramContactHint = (() => {
     if (user?.username) {
-      return `Orders will be linked to ${telegramUserLabel} and your Telegram user ID.`
+      return translate('coHint.linkedTo', { label: telegramUserLabel })
     }
 
     if (user?.id) {
-      return `Orders will be linked to your Telegram user ID ${user.id}, even without a public username.`
+      return translate('coHint.linkedToId', { id: user.id })
     }
 
-    return 'Checkout works only inside the Telegram Mini App.'
-  }, [telegramUserLabel, user])
+    return translate('coHint.telegramOnly')
+  })()
 
   function handleCheckoutFieldChange(field: keyof CheckoutForm, value: string) {
     // Clear field-level error when user edits the field
@@ -137,6 +232,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
           paymentMethod: 'usdt',
           meetupLocation: '',
           meetupTimeOption: '',
+          meetupTimeCustom: '',
           meetupNotes: '',
         }
       }
@@ -166,7 +262,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   }
 
   function handleOpenCheckout() {
-    if (!requireTelegramAccess('Checkout')) {
+    if (!requireTelegramAccess('gateAction.checkout')) {
       return
     }
 
@@ -186,7 +282,7 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
   }
 
   async function handleSubmitCheckout() {
-    if (!requireTelegramAccess('Checkout')) {
+    if (!requireTelegramAccess('gateAction.checkout')) {
       return
     }
 
@@ -202,12 +298,12 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
         : ''
 
     if (cartItems.length === 0) {
-      setCheckoutError('Add at least one product before checkout.')
+      setCheckoutError(translate('coError.noProducts'))
       return
     }
 
     if (!trimmedName || !user?.id || !normalizedTelegramHandle) {
-      setCheckoutError('Open the Mini App in Telegram with a real account before checkout.')
+      setCheckoutError(translate('coError.telegramRequired'))
       return
     }
 
@@ -216,30 +312,44 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
 
     if (checkoutForm.fulfillmentType === 'delivery') {
       if (!checkoutForm.deliveryCity.trim()) {
-        nextFieldErrors.deliveryCity = 'City is required.'
+        nextFieldErrors.deliveryCity = translate('coError.cityRequired')
       }
       if (!checkoutForm.deliveryAddress.trim()) {
-        nextFieldErrors.deliveryAddress = 'Address is required.'
+        nextFieldErrors.deliveryAddress = translate('coError.addressRequired')
       }
     }
 
     if (checkoutForm.fulfillmentType === 'meetup') {
       if (!checkoutForm.meetupLocation) {
-        nextFieldErrors.meetupLocation = 'Select a meetup location.'
+        nextFieldErrors.meetupLocation = translate('coError.meetupLocationRequired')
+      }
+      // "Other location" selected but no custom location typed — an order
+      // with an empty meetup spot would leave the admin guessing.
+      if (
+        checkoutForm.meetupLocation === '__other__' &&
+        !checkoutForm.deliveryAddress.trim()
+      ) {
+        nextFieldErrors.deliveryAddress = translate('coError.locationRequired')
+      }
+      if (
+        checkoutForm.meetupTimeOption === '__other__' &&
+        !checkoutForm.meetupTimeCustom.trim()
+      ) {
+        nextFieldErrors.meetupTimeCustom = translate('coError.timeRequired')
       }
       // meetupTimeOption is optional per UI — user can specify in notes
     }
 
     if (Object.keys(nextFieldErrors).length > 0) {
       setFieldErrors(nextFieldErrors)
-      setCheckoutError('Fix the highlighted fields below.')
+      setCheckoutError(translate('coError.fixFields'))
       return
     }
 
     setFieldErrors({})
 
     if (hasPendingPromoCode) {
-      setCheckoutError('Apply the promo code first, or clear it before checkout.')
+      setCheckoutError(translate('coError.promoPending'))
       return
     }
 
@@ -247,9 +357,11 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
       setCheckoutSubmitState('submitting')
       const initialStatus =
         checkoutForm.paymentMethod === 'usdt' ? 'waiting_for_payment' : 'new'
+      const clientOrderId = getOrCreateClientOrderId()
 
       const orderId = await createOrder({
         initData: options.initData,
+        clientOrderId,
         fullName: trimmedName,
         telegramHandle: normalizedTelegramHandle,
         telegramUserId: user?.id,
@@ -259,8 +371,16 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
         deliveryCity: checkoutForm.deliveryCity.trim(),
         deliveryAddress: checkoutForm.deliveryAddress.trim(),
         deliveryNotes: checkoutForm.deliveryNotes.trim(),
-        meetupLocation: checkoutForm.meetupLocation,
-        meetupTimeOption: checkoutForm.meetupTimeOption,
+        // 'Other location/time' resolve to the typed text so the order doc
+        // stores the actual value (displays fall back to the raw string).
+        meetupLocation:
+          checkoutForm.meetupLocation === '__other__'
+            ? checkoutForm.deliveryAddress.trim().slice(0, 80)
+            : checkoutForm.meetupLocation,
+        meetupTimeOption:
+          checkoutForm.meetupTimeOption === '__other__'
+            ? checkoutForm.meetupTimeCustom.trim().slice(0, 80)
+            : checkoutForm.meetupTimeOption,
         meetupNotes: checkoutForm.meetupNotes.trim(),
         items: cartItems,
         subtotal: checkoutSubtotal,
@@ -279,6 +399,10 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
         total: checkoutTotal,
       })
       setCheckoutSubmitted(true)
+      // The idempotency key has served its purpose: clear it so the next
+      // checkout session mints a fresh one. Failed attempts keep it, so a
+      // back-and-retry after a lost response converges to the same order.
+      removeStoredSessionValue(CHECKOUT_IDEMPOTENCY_KEY)
       clearCart()
       clearPromo()
       setCheckoutForm((currentForm) => ({
@@ -292,14 +416,13 @@ export function useCheckout(options: UseCheckoutOptions): UseCheckoutResult {
         deliveryNotes: '',
         meetupLocation: '',
         meetupTimeOption: '',
+        meetupTimeCustom: '',
         meetupNotes: '',
       }))
       onCheckoutSuccess()
       await reloadProducts()
     } catch (error) {
-      setCheckoutError(
-        error instanceof Error ? error.message : 'Failed to mark items as sold.',
-      )
+      setCheckoutError(translateCheckoutError(error))
     } finally {
       setCheckoutSubmitState('idle')
     }

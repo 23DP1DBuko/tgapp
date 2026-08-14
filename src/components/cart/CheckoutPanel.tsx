@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { triggerHapticNotification } from '../../lib/telegram/webApp'
 import { Button } from '../ui/Button'
 import { SwipeablePanel } from '../ui/SwipeablePanel'
+import { useI18n } from '../../lib/i18n'
+import type { TranslateFn } from '../../lib/i18n/translations'
 import type { AppliedPromo } from '../../types/promo'
 import type {
   CartItem,
@@ -12,16 +14,17 @@ import type {
 } from '../../types/cart'
 
 const MEETUP_LOCATIONS = [
-  { value: 'origo_center', label: 'Origo Center' },
-  { value: 'old_town', label: 'Old Town' },
-  { value: 'akropole', label: 'Akropole' },
-  { value: '__other__', label: 'Other Location' },
+  { value: 'origo_center', labelKey: 'loc.origoCenter' },
+  { value: 'old_town', labelKey: 'loc.oldTown' },
+  { value: 'akropole', labelKey: 'loc.akropole' },
+  { value: '__other__', labelKey: 'loc.other' },
 ] as const
 
 const TIME_OPTIONS = [
-  { value: 'today_evening', label: 'Today Evening' },
-  { value: 'tomorrow_afternoon', label: 'Tomorrow Afternoon' },
-  { value: 'this_weekend', label: 'This Weekend' },
+  { value: 'today_evening', labelKey: 'time.todayEvening' },
+  { value: 'tomorrow_afternoon', labelKey: 'time.tomorrowAfternoon' },
+  { value: 'this_weekend', labelKey: 'time.thisWeekend' },
+  { value: '__other__', labelKey: 'time.other' },
 ] as const
 
 type CheckoutPanelProps = {
@@ -77,6 +80,7 @@ export function CheckoutPanel({
   checkoutStep,
   onCheckoutStepChange,
 }: CheckoutPanelProps) {
+  const { t } = useI18n()
   const isSubmitting = submitState === 'submitting'
   const subtotal = items.reduce((sum, item) => sum + item.price, 0)
   const discountAmount = appliedPromo?.discountAmount ?? 0
@@ -84,29 +88,29 @@ export function CheckoutPanel({
   const successForm = successSnapshot?.form ?? form
   const successItems = successSnapshot?.items ?? items
   const successTotal = successSnapshot?.total ?? total
-  const successSummary = getCheckoutSuccessSummary(successForm)
+  const successSummary = getCheckoutSuccessSummary(successForm, t)
   const successFlow = [
     {
-      label: 'Request Sent',
-      detail: 'Order saved',
+      label: t('co.successStep1'),
+      detail: t('co.successStep1Detail'),
       isActive: true,
     },
     {
-      label: successForm.paymentMethod === 'usdt' ? 'Payment Check' : 'Admin Follow-Up',
+      label: successForm.paymentMethod === 'usdt' ? t('co.successStep2Usdt') : t('co.successStep2Admin'),
       detail:
         successForm.paymentMethod === 'usdt'
-          ? 'Waiting for payment'
+          ? t('co.successStep2DetailPayment')
           : successForm.fulfillmentType === 'delivery'
-            ? 'Delivery details'
-            : 'Meetup details',
+            ? t('co.successStep2DetailDelivery')
+            : t('co.successStep2DetailMeetup'),
       isActive: false,
     },
     {
       label:
         successForm.fulfillmentType === 'delivery'
-          ? 'Delivery Handoff'
-          : 'Meetup Handoff',
-      detail: 'Final confirmation',
+          ? t('co.successStep3Delivery')
+          : t('co.successStep3Meetup'),
+      detail: t('co.successStep3Detail'),
       isActive: false,
     },
   ]
@@ -133,16 +137,6 @@ export function CheckoutPanel({
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-
-  // Close meetup dropdown when an option is selected
-  useEffect(() => {
-    setMeetupDropdownOpen(false)
-  }, [form.meetupLocation])
-
-  // Close time dropdown when an option is selected
-  useEffect(() => {
-    setTimeDropdownOpen(false)
-  }, [form.meetupTimeOption])
 
   // Auto-focus first option when meetup dropdown opens
   useEffect(() => {
@@ -186,18 +180,18 @@ export function CheckoutPanel({
   // Stepper step definitions
   const steps = [
     {
-      label: 'Contact',
+      label: t('co.stepContact'),
       isValid: Boolean(form.fullName.trim()) && Boolean(form.telegramHandle.trim()),
     },
     {
-      label: 'Fulfillment',
+      label: t('co.stepFulfillment'),
       isValid:
         form.fulfillmentType === 'delivery'
           ? Boolean(form.deliveryCity.trim() && form.deliveryAddress.trim())
           : Boolean(form.meetupLocation.trim()),
     },
     {
-      label: 'Payment',
+      label: t('co.stepPayment'),
       isValid: items.length > 0 && !hasPendingPromoCode,
     },
   ] as const
@@ -228,7 +222,7 @@ export function CheckoutPanel({
 
   function fieldClass(field: keyof CheckoutForm): string {
     const hasError = fieldErrors[field]
-    return 'w-full rounded-2xl border bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-500/80' +
+    return 'w-full rounded-2xl border bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-400/80' +
       (hasError ? ' border-[var(--shop-red)]' : ' border-white/10') +
       ' focus:border-[var(--shop-red)]'
   }
@@ -241,11 +235,12 @@ export function CheckoutPanel({
 
   // ── Label helpers ──
 
-  const selectedLocationLabel =
-    MEETUP_LOCATIONS.find((loc) => loc.value === form.meetupLocation)?.label ?? ''
-  const selectedTimeLabel =
-    TIME_OPTIONS.find((opt) => opt.value === form.meetupTimeOption)?.label ?? ''
+  const selectedLocation = MEETUP_LOCATIONS.find((loc) => loc.value === form.meetupLocation)
+  const selectedLocationLabel = selectedLocation ? t(selectedLocation.labelKey) : ''
+  const selectedTime = TIME_OPTIONS.find((opt) => opt.value === form.meetupTimeOption)
+  const selectedTimeLabel = selectedTime ? t(selectedTime.labelKey) : ''
   const isCustomLocation = form.meetupLocation === '__other__'
+  const isCustomTime = form.meetupTimeOption === '__other__'
 
   // ── Render success state ──
 
@@ -257,14 +252,14 @@ export function CheckoutPanel({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-[0.28em] text-white/70">
-                Order Request Sent
+                {t('co.successKicker')}
               </p>
               <h3 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[var(--shop-cream)]">
-                Piece reserved
+                {t('co.successTitle')}
               </h3>
             </div>
             <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-              Awaiting follow-up
+              {t('co.successAwaiting')}
             </span>
           </div>
         </div>
@@ -273,11 +268,11 @@ export function CheckoutPanel({
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
-                Request Status
+                {t('co.successRequestStatus')}
               </p>
             </div>
             <span className="rounded-full bg-emerald-300/18 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100">
-              Live
+              {t('co.successLive')}
             </span>
           </div>
 
@@ -309,25 +304,25 @@ export function CheckoutPanel({
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-[22px] border border-white/10 bg-black/15 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
-              Fulfillment
+              {t('co.fulfillment')}
             </p>
             <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
-              {successForm.fulfillmentType === 'delivery' ? 'Delivery' : 'Meetup'}
+              {successForm.fulfillmentType === 'delivery' ? t('co.delivery') : t('co.meetup')}
             </p>
           </div>
           <div className="rounded-[22px] border border-white/10 bg-black/15 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
-              Payment
+              {t('co.payment')}
             </p>
             <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
-              {successForm.paymentMethod === 'usdt' ? 'USDT' : 'Meetup Cash'}
+              {successForm.paymentMethod === 'usdt' ? t('co.usdt') : t('co.meetupCash')}
             </p>
           </div>
         </div>
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-black/15 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
-            Next Step
+            {t('co.nextStep')}
           </p>
           <p className="mt-2 text-sm leading-6 text-[var(--shop-cream)]">
             {successSummary.nextStep}
@@ -339,20 +334,20 @@ export function CheckoutPanel({
 
         <div className="mt-4 rounded-[24px] border border-white/10 bg-black/15 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
-            Order Snapshot
+            {t('co.orderSnapshot')}
           </p>
           <div className="mt-3 space-y-2 text-sm text-[var(--shop-cream)]">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-white/70">Items</span>
+              <span className="text-white/70">{t('co.items')}</span>
               <span>{successItems.length}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-white/70">Total</span>
+              <span className="text-white/70">{t('co.total')}</span>
               <span>{successTotal} EUR</span>
             </div>
             {orderId ? (
               <div className="flex items-start justify-between gap-3">
-                <span className="text-white/70">Order ID</span>
+                <span className="text-white/70">{t('co.orderId')}</span>
                 <span className="max-w-[60%] break-all text-right text-xs uppercase tracking-[0.12em]">
                   {orderId}
                 </span>
@@ -364,10 +359,10 @@ export function CheckoutPanel({
         <div className="mt-4 rounded-[24px] border border-white/10 bg-black/15 p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
-              Reserved Pieces
+              {t('co.orderItems')}
             </p>
             <span className="rounded-full bg-white/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-cream)]">
-              {successItems.length} total
+              {t('co.totalCount', { n: successItems.length })}
             </span>
           </div>
 
@@ -382,7 +377,7 @@ export function CheckoutPanel({
                     <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/60">
-                      No Img
+                      {t('co.noImg')}
                     </div>
                   )}
                 </div>
@@ -406,14 +401,14 @@ export function CheckoutPanel({
             onClick={onViewOrders}
             className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--shop-cream)]"
           >
-            View My Orders
+            {t('co.viewOrders')}
           </button>
           <button
             type="button"
             onClick={onBackToCatalog}
           className="rounded-[24px] bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] px-4 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-white"
         >
-          ← Catalog
+          {t('co.backCatalog')}
           </button>
         </div>
       </article>
@@ -454,7 +449,7 @@ export function CheckoutPanel({
                       ? 'bg-[linear-gradient(135deg,var(--shop-purple),var(--shop-red))] text-white'
                       : isPast
                         ? 'bg-emerald-300/20 text-emerald-100'
-                        : 'bg-white/8 text-zinc-500'
+                        : 'bg-white/8 text-zinc-400'
                   }`}
                 >
                   {isPast ? '✓' : stepNum}
@@ -478,22 +473,22 @@ export function CheckoutPanel({
         <div className="space-y-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Step 1 — Contact Information
+              {t('co.step1Kicker')}
             </p>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">
-              How should we reach you about your order?
+            <p className="mt-1 text-xs leading-5 text-zinc-400">
+              {t('co.step1Hint')}
             </p>
           </div>
 
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Full Name <span className="text-[var(--shop-red)]">*</span>
+              {t('co.fullName')} <span className="text-[var(--shop-red)]">*</span>
             </span>
             <input
               value={form.fullName}
               onChange={(e) => onChangeForm('fullName', e.target.value)}
               className={fieldClass('fullName')}
-              placeholder="Your name"
+              placeholder={t('co.namePlaceholder')}
               autoComplete="name"
             />
             {inlineFieldError('fullName')}
@@ -501,36 +496,36 @@ export function CheckoutPanel({
 
           <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
             <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Telegram Account <span className="text-[var(--shop-red)]">*</span>
+              {t('co.telegramAccount')} <span className="text-[var(--shop-red)]">*</span>
             </span>
             <p className="mt-2 text-sm font-semibold text-[var(--shop-cream)]">
               {telegramUserLabel}
             </p>
-            <p className="mt-1 text-[10px] leading-4 text-zinc-500">
+            <p className="mt-1 text-[10px] leading-4 text-zinc-400">
               {telegramContactHint}
             </p>
           </div>
 
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-              Note
+              {t('co.note')}
             </span>
             <textarea
               value={form.note}
               onChange={(e) => onChangeForm('note', e.target.value)}
               className={`${inputClassName} min-h-24 resize-y`}
-              placeholder="Any extra preferences or wishes for your order..."
+              placeholder={t('co.notePlaceholder')}
             />
           </label>
 
           <div className="flex gap-3 pt-2">
             {checkoutStep > 1 && (
               <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
-                ← Back
+                {t('co.back')}
               </Button>
             )}
             <Button variant="primary" size="md" disabled={isNextDisabled1} onClick={handleGoToNextStep} className="flex-1">
-              Next →
+              {t('co.next')}
             </Button>
           </div>
         </div>
@@ -541,10 +536,10 @@ export function CheckoutPanel({
         <div className="space-y-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Step 2 — Fulfillment Method
+              {t('co.step2Kicker')}
             </p>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">
-              Choose how you&apos;d like to receive your order.
+            <p className="mt-1 text-xs leading-5 text-zinc-400">
+              {t('co.step2Hint')}
             </p>
           </div>
 
@@ -559,8 +554,8 @@ export function CheckoutPanel({
                   : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
               }`}
             >
-              <span className="block text-xs font-bold uppercase tracking-[0.16em]">Meetup</span>
-              <span className="mt-1 block text-[10px] text-zinc-500">In-person handoff</span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em]">{t('co.meetup')}</span>
+              <span className="mt-1 block text-[10px] text-zinc-400">{t('co.meetupDesc')}</span>
             </button>
             <button
               type="button"
@@ -571,8 +566,8 @@ export function CheckoutPanel({
                   : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
               }`}
             >
-              <span className="block text-xs font-bold uppercase tracking-[0.16em]">Delivery</span>
-              <span className="mt-1 block text-[10px] text-zinc-500">Shipped to address</span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em]">{t('co.delivery')}</span>
+              <span className="mt-1 block text-[10px] text-zinc-400">{t('co.deliveryDesc')}</span>
             </button>
           </div>
 
@@ -581,7 +576,7 @@ export function CheckoutPanel({
             <div className="space-y-4">
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  City <span className="text-[var(--shop-red)]">*</span>
+                  {t('co.city')} <span className="text-[var(--shop-red)]">*</span>
                 </span>
                 <input
                   value={form.deliveryCity}
@@ -593,25 +588,25 @@ export function CheckoutPanel({
               </label>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Address <span className="text-[var(--shop-red)]">*</span>
+                  {t('co.address')} <span className="text-[var(--shop-red)]">*</span>
                 </span>
                 <input
                   value={form.deliveryAddress}
                   onChange={(e) => onChangeForm('deliveryAddress', e.target.value)}
                   className={fieldClass('deliveryAddress')}
-                  placeholder="Street, house, apartment"
+                  placeholder={t('co.addressPlaceholder')}
                 />
                 {inlineFieldError('deliveryAddress')}
               </label>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Delivery Notes
+                  {t('co.deliveryNotes')}
                 </span>
                 <textarea
                   value={form.deliveryNotes}
                   onChange={(e) => onChangeForm('deliveryNotes', e.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Please provide entrance code, floor, apartment number, or drop-off details..."
+                  placeholder={t('co.deliveryNotesPlaceholder')}
                 />
               </label>
             </div>
@@ -621,7 +616,7 @@ export function CheckoutPanel({
               {/* Custom Meetup Location Dropdown */}
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Meetup Location <span className="text-[var(--shop-red)]">*</span>
+                  {t('co.meetupLocation')} <span className="text-[var(--shop-red)]">*</span>
                 </span>
                 <div className="relative" ref={meetupDropdownRef}>
                   <button
@@ -644,8 +639,8 @@ export function CheckoutPanel({
                           ? 'border-[var(--shop-red)] bg-white/8 text-[var(--shop-cream)]'
                           : 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
                         : fieldErrors?.meetupLocation
-                          ? 'border-[var(--shop-red)] bg-white/6 text-zinc-500'
-                          : 'border-white/10 bg-white/6 text-zinc-500'
+                          ? 'border-[var(--shop-red)] bg-white/6 text-zinc-400'
+                          : 'border-white/10 bg-white/6 text-zinc-400'
                     }`}
                   >
                     <span>
@@ -653,7 +648,7 @@ export function CheckoutPanel({
                         ? isCustomLocation && form.deliveryAddress
                           ? form.deliveryAddress
                           : selectedLocationLabel
-                        : fieldErrors?.meetupLocation ? 'Select a meetup location' : 'Select a meetup location'}
+                        : t('co.selectLocation')}
                     </span>
                     <svg
                       viewBox="0 0 24 24"
@@ -670,7 +665,7 @@ export function CheckoutPanel({
                   </button>
 
                   {meetupDropdownOpen && (
-                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[var(--shop-dropdown)] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
                       {MEETUP_LOCATIONS.map((loc, index) => (
                         <button
                           key={loc.value}
@@ -729,7 +724,7 @@ export function CheckoutPanel({
           </g>
         </svg>
                           )}
-                          {loc.label}
+                          {t(loc.labelKey)}
                         </button>
                       ))}
                     </div>
@@ -742,22 +737,24 @@ export function CheckoutPanel({
               {isCustomLocation && (
                 <label className="block">
                   <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                    Specify Location <span className="text-[var(--shop-red)]">*</span>
+                    {t('co.specifyLocation')} <span className="text-[var(--shop-red)]">*</span>
                   </span>
                   <input
                     value={form.deliveryAddress}
                     onChange={(e) => onChangeForm('deliveryAddress', e.target.value)}
-                    className={inputClassName}
-                    placeholder="Enter your meetup address..."
+                    className={fieldClass('deliveryAddress')}
+                    placeholder={t('co.meetupAddressPlaceholder')}
+                    maxLength={80}
                     autoComplete="off"
                   />
+                  {inlineFieldError('deliveryAddress')}
                 </label>
               )}
 
               {/* Custom Time Window Dropdown (optional) */}
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Time Window
+                  {t('co.timeWindow')}
                 </span>
                 <div className="relative" ref={timeDropdownRef}>
                   <button
@@ -777,11 +774,15 @@ export function CheckoutPanel({
                     className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-[var(--shop-purple)]/40 ${
                       form.meetupTimeOption
                         ? 'border-white/10 bg-white/8 text-[var(--shop-cream)]'
-                        : 'border-white/10 bg-white/6 text-zinc-500'
+                        : 'border-white/10 bg-white/6 text-zinc-400'
                     }`}
                   >
                     <span>
-                      {form.meetupTimeOption ? selectedTimeLabel : 'Select a time window (optional)'}
+                      {form.meetupTimeOption
+                        ? isCustomTime && form.meetupTimeCustom
+                          ? form.meetupTimeCustom
+                          : selectedTimeLabel
+                        : t('co.selectTime')}
                     </span>
                     <svg
                       viewBox="0 0 24 24"
@@ -798,7 +799,7 @@ export function CheckoutPanel({
                   </button>
 
                   {timeDropdownOpen && (
-                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1a0e1c] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[var(--shop-dropdown)] shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
                       {TIME_OPTIONS.map((opt, index) => (
                         <button
                           key={opt.value}
@@ -857,28 +858,46 @@ export function CheckoutPanel({
           </g>
         </svg>
                           )}
-                          {opt.label}
+                          {t(opt.labelKey)}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
                 {!form.meetupTimeOption && (
-                  <p className="mt-1.5 text-[10px] text-zinc-500">
-                    You can leave this blank and specify your time preferences in the notes below.
+                  <p className="mt-1.5 text-[10px] text-zinc-400">
+                    {t('co.timeHint')}
                   </p>
                 )}
               </label>
 
+              {/* Custom time text input (shown when "Other Time" is selected) */}
+              {isCustomTime && (
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
+                    {t('co.specifyTime')} <span className="text-[var(--shop-red)]">*</span>
+                  </span>
+                  <input
+                    value={form.meetupTimeCustom}
+                    onChange={(e) => onChangeForm('meetupTimeCustom', e.target.value)}
+                    className={inputClassName}
+                    placeholder={t('co.timePlaceholder')}
+                    maxLength={80}
+                    autoComplete="off"
+                  />
+                  {inlineFieldError('meetupTimeCustom')}
+                </label>
+              )}
+
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]">
-                  Meetup Notes
+                  {t('co.meetupNotes')}
                 </span>
                 <textarea
                   value={form.meetupNotes}
                   onChange={(e) => onChangeForm('meetupNotes', e.target.value)}
                   className={`${inputClassName} min-h-20 resize-y`}
-                  placeholder="Describe land markers or your exact preferred arrival time here..."
+                  placeholder={t('co.meetupNotesPlaceholder')}
                 />
               </label>
             </div>
@@ -886,10 +905,10 @@ export function CheckoutPanel({
 
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
-              ← Back
+              {t('co.back')}
             </Button>
             <Button variant="primary" size="md" disabled={isNextDisabled2} onClick={handleGoToNextStep} className="flex-1">
-              Next →
+              {t('co.next')}
             </Button>
           </div>
         </div>
@@ -900,17 +919,17 @@ export function CheckoutPanel({
         <div className="space-y-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--shop-muted)]">
-              Step 3 — Payment & Review
+              {t('co.step3Kicker')}
             </p>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">
-              Choose payment method and confirm your order.
+            <p className="mt-1 text-xs leading-5 text-zinc-400">
+              {t('co.step3Hint')}
             </p>
           </div>
 
           {/* Payment Method Selector */}
           <div className="space-y-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Payment Method
+              {t('co.paymentMethod')}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <button
@@ -923,8 +942,8 @@ export function CheckoutPanel({
                     : 'border-white/10 bg-white/6 text-[var(--shop-muted)] hover:bg-white/10'
                 } disabled:cursor-not-allowed disabled:opacity-40`}
               >
-                <span className="block text-xs font-bold uppercase tracking-[0.16em]">Meetup Cash</span>
-                <span className="mt-1 block text-[10px] text-zinc-500">Pay in person</span>
+                <span className="block text-xs font-bold uppercase tracking-[0.16em]">{t('co.meetupCash')}</span>
+                <span className="mt-1 block text-[10px] text-zinc-400">{t('co.meetupCashDesc')}</span>
               </button>
               <button
                 type="button"
@@ -936,7 +955,7 @@ export function CheckoutPanel({
                 }`}
               >
                 <span className="block text-xs font-bold uppercase tracking-[0.16em]">USDT (TRC-20)</span>
-                <span className="mt-1 block text-[10px] text-zinc-500">Crypto payment</span>
+                <span className="mt-1 block text-[10px] text-zinc-400">{t('co.usdtDesc')}</span>
               </button>
             </div>
           </div>
@@ -944,7 +963,7 @@ export function CheckoutPanel({
           {/* Promo Code */}
           <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Promo Code
+              {t('co.promoCode')}
             </p>
             <div className="mt-3 flex items-end gap-3">
               <label className="block min-w-0 flex-1">
@@ -952,7 +971,7 @@ export function CheckoutPanel({
                   value={form.promoCode}
                   onChange={(e) => onChangeForm('promoCode', e.target.value.toUpperCase())}
                   className={inputClassName}
-                  placeholder="DROP10"
+                  placeholder={t('co.promoPlaceholder')}
                 />
               </label>
               <Button
@@ -962,7 +981,7 @@ export function CheckoutPanel({
                 onClick={onApplyPromo}
                 className="font-semibold tracking-[0.16em]"
               >
-                {isApplyingPromo ? 'Applying...' : 'Apply'}
+                {isApplyingPromo ? t('co.applying') : t('co.apply')}
               </Button>
             </div>
 
@@ -971,12 +990,12 @@ export function CheckoutPanel({
             ) : null}
             {appliedPromo ? (
               <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
-                Applied {appliedPromo.code} for -{appliedPromo.discountAmount} EUR
+                {t('co.appliedPromo', { code: appliedPromo.code, amount: appliedPromo.discountAmount })}
               </p>
             ) : null}
             {hasPendingPromoCode ? (
               <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--shop-red)]">
-                Apply this promo code or clear it before checkout.
+                {t('co.pendingPromo')}
               </p>
             ) : null}
           </div>
@@ -984,7 +1003,7 @@ export function CheckoutPanel({
           {/* Order Review - Product Cards */}
           <div className="space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-              Order Review
+              {t('co.orderReview')}
             </p>
             {items.map((item) => (
               <div
@@ -995,8 +1014,8 @@ export function CheckoutPanel({
                   {item.image ? (
                     <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                      No Img
+                    <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                      {t('co.noImg')}
                     </div>
                   )}
                 </div>
@@ -1009,8 +1028,8 @@ export function CheckoutPanel({
                 <button
                   type="button"
                   onClick={() => onRemoveItem(item.productId)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-[var(--shop-red)]/20 hover:text-[var(--shop-red)] active:scale-90"
-                  aria-label={`Remove ${item.name} from cart`}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-[var(--shop-red)]/20 hover:text-[var(--shop-red)] active:scale-90"
+                  aria-label={t('co.removeAria', { name: item.name })}
                 >
                   <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
                     <g transform="translate(2, 2)">
@@ -1024,25 +1043,27 @@ export function CheckoutPanel({
 
           {/* Mini Order Preview Summary */}
           <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-              Order Summary
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
+              {t('co.orderSummary')}
             </p>
             <div className="mt-2 space-y-1.5">
               <p className="text-xs text-zinc-400">
                 {form.fulfillmentType === 'delivery'
-                  ? `Deliver to: ${form.deliveryCity}${form.deliveryAddress ? `, ${form.deliveryAddress}` : ''}`
+                  ? t('co.deliverTo', {
+                      city: form.deliveryCity + (form.deliveryAddress ? `, ${form.deliveryAddress}` : ''),
+                    })
                   : isCustomLocation && form.deliveryAddress
-                    ? `Meetup: ${form.deliveryAddress}`
-                    : `Meetup: ${selectedLocationLabel || 'TBD'}`}
+                    ? t('co.meetupAt', { location: form.deliveryAddress })
+                    : t('co.meetupAt', { location: selectedLocationLabel || t('co.tbd') })}
                 {form.fulfillmentType === 'meetup' && form.meetupTimeOption
-                  ? ` — ${selectedTimeLabel}`
+                  ? ` — ${isCustomTime && form.meetupTimeCustom ? form.meetupTimeCustom : selectedTimeLabel}`
                   : ''}
               </p>
               <p className="text-xs text-zinc-400">
-                Contact: {form.fullName}
+                {t('co.contactLine', { name: form.fullName })}
               </p>
               <p className="text-xs text-zinc-400">
-                Payment: {form.paymentMethod === 'usdt' ? 'USDT (TRC-20)' : 'Meetup Cash'}
+                {t('co.paymentLine', { method: form.paymentMethod === 'usdt' ? 'USDT (TRC-20)' : t('co.meetupCash') })}
               </p>
             </div>
           </div>
@@ -1051,17 +1072,17 @@ export function CheckoutPanel({
           <div className="rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(139,61,255,0.14),rgba(255,77,90,0.1))] px-4 py-4">
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-sm text-zinc-400">
-                <span>Subtotal</span>
+                <span>{t('co.subtotal')}</span>
                 <span>{subtotal} EUR</span>
               </div>
               {appliedPromo ? (
                 <div className="flex items-center justify-between text-sm text-zinc-400">
-                  <span>Discount</span>
+                  <span>{t('co.discount')}</span>
                   <span>-{discountAmount} EUR</span>
                 </div>
               ) : null}
               <div className="flex items-center justify-between border-t border-white/10 pt-2.5 text-sm font-semibold text-[var(--shop-cream)]">
-                <span>Total</span>
+                <span>{t('co.total')}</span>
                 <span>{total} EUR</span>
               </div>
             </div>
@@ -1077,25 +1098,24 @@ export function CheckoutPanel({
           {/* Legal disclaimer */}
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
             <p className="text-xs leading-5 text-zinc-400">
-              By submitting this request, you agree that this is an{' '}
-              <strong className="text-zinc-300">order request</strong>, not a final purchase.
-              Payment, delivery, returns, and final order confirmation occur on{' '}
-              <strong className="text-zinc-300">Depop/Yaga</strong> or by separate agreement
-              with the seller. See our{' '}
+              {t('co.legalDisclaimer1')}{' '}
+              <strong className="text-zinc-300">{t('co.legalRequest')}</strong>
+              {t('co.legalDisclaimer2')}{' '}
+              <strong className="text-zinc-300">Depop/Yaga</strong> {t('co.legalDisclaimer3')}{' '}
               <button
                 type="button"
                 onClick={onOpenPrivacy}
                 className="font-semibold underline decoration-[var(--shop-purple)]/50 hover:decoration-[var(--shop-purple)] text-[var(--shop-cream)]"
               >
-                Privacy Policy
+                {t('co.privacy')}
               </button>
-              {' '}and{' '}
+              {' '}{t('co.legalAnd')}{' '}
               <button
                 type="button"
                 onClick={onOpenTerms}
                 className="font-semibold underline decoration-[var(--shop-purple)]/50 hover:decoration-[var(--shop-purple)] text-[var(--shop-cream)]"
               >
-                Terms of Service
+                {t('co.terms')}
               </button>.
             </p>
           </div>
@@ -1103,7 +1123,7 @@ export function CheckoutPanel({
           {/* Action buttons */}
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" size="md" onClick={handleGoToPrevStep} className="flex-1">
-              ← Back
+              {t('co.back')}
             </Button>
             <Button
               variant="primary"
@@ -1113,7 +1133,7 @@ export function CheckoutPanel({
               onClick={onSubmit}
               className="flex-[2]"
             >
-              {isSubmitting ? 'Sending Order Request...' : 'Send Order Request'}
+              {isSubmitting ? t('co.sending') : t('co.send')}
             </Button>
           </div>
         </div>
@@ -1123,54 +1143,58 @@ export function CheckoutPanel({
 }
 
 const inputClassName =
-  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-500/80 focus:border-[var(--shop-red)]'
+  'w-full rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm text-[var(--shop-cream)] outline-none transition placeholder:text-zinc-400/80 focus:border-[var(--shop-red)]'
 
-function getCheckoutSuccessSummary(form: CheckoutForm) {
+function getCheckoutSuccessSummary(form: CheckoutForm, t: TranslateFn) {
   if (form.fulfillmentType === 'delivery' && form.paymentMethod === 'usdt') {
     return {
-      nextStep:
-        'Send the USDT payment, then wait for delivery confirmation in Telegram.',
-      detail: `Delivery to ${form.deliveryCity || 'your city'} | ${form.deliveryAddress || 'address pending'}`,
+      nextStep: t('co.summaryUsdtDelivery'),
+      detail: t('co.deliveryDetail', {
+        city: form.deliveryCity || t('co.yourCity'),
+        address: form.deliveryAddress || t('co.addressPending'),
+      }),
     }
   }
 
   if (form.fulfillmentType === 'meetup' && form.paymentMethod === 'usdt') {
     return {
-      nextStep:
-        'Send the USDT payment, then confirm the meetup in Telegram chat.',
-      detail: `${formatMeetupLocation(form.meetupLocation)} | ${formatMeetupTime(form.meetupTimeOption)}`,
+      nextStep: t('co.summaryUsdtMeetup'),
+      detail: `${formatMeetupLocation(form.meetupLocation, form.deliveryAddress, t)} | ${formatMeetupTime(form.meetupTimeOption, form.meetupTimeCustom, t)}`,
     }
   }
 
   return {
-    nextStep:
-      'Admin will message you in Telegram to confirm the meetup.',
-    detail: `${formatMeetupLocation(form.meetupLocation)} | ${formatMeetupTime(form.meetupTimeOption)}`,
+    nextStep: t('co.summaryMeetup'),
+    detail: `${formatMeetupLocation(form.meetupLocation, form.deliveryAddress, t)} | ${formatMeetupTime(form.meetupTimeOption, form.meetupTimeCustom, t)}`,
   }
 }
 
-function formatMeetupLocation(value: string) {
+function formatMeetupLocation(value: string, customLocation: string, t: TranslateFn) {
   switch (value) {
     case 'origo_center':
-      return 'Origo Center'
+      return t('loc.origoCenter')
     case 'old_town':
-      return 'Old Town'
+      return t('loc.oldTown')
     case 'akropole':
-      return 'Akropole'
+      return t('loc.akropole')
+    case '__other__':
+      return customLocation.trim() || t('co.meetupNotSelected')
     default:
-      return 'Meetup location not selected'
+      return t('co.meetupNotSelected')
   }
 }
 
-function formatMeetupTime(value: string) {
+function formatMeetupTime(value: string, customTime: string, t: TranslateFn) {
   switch (value) {
     case 'today_evening':
-      return 'Today Evening'
+      return t('time.todayEvening')
     case 'tomorrow_afternoon':
-      return 'Tomorrow Afternoon'
+      return t('time.tomorrowAfternoon')
     case 'this_weekend':
-      return 'This Weekend'
+      return t('time.thisWeekend')
+    case '__other__':
+      return customTime.trim() || t('co.timeNotSelected')
     default:
-      return 'Meetup time not selected'
+      return t('co.timeNotSelected')
   }
 }

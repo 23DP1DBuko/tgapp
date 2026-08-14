@@ -1,7 +1,7 @@
 // ── Daily Check-In Module ──
 import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
-import { telegramBotToken, verifyTelegramInitData, } from './helpers.js';
+import { telegramBotToken, verifyTelegramInitData, generateRandomSuffix, sendTelegramRewardMessage, } from './helpers.js';
 // ── Milestones ──
 const CHECKIN_MILESTONES = [
     { threshold: 3, discountPercent: 5, label: '5% OFF' },
@@ -24,13 +24,13 @@ function getYesterdayDateString() {
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
 }
-function generatePromoCode(telegramUserId, streak) {
+export function generatePromoCode(telegramUserId, streak) {
     const suffix = String(streak).padStart(2, '0');
-    const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const randomSuffix = generateRandomSuffix(4);
     return `DAILY${suffix}_${telegramUserId.toString().slice(-4)}_${randomSuffix}`;
 }
 // ── Shared function for fetching (and optionally updating) check-in state ──
-async function getCheckinState(telegramUserId) {
+export async function getCheckinState(telegramUserId) {
     const db = getFirestore();
     const docRef = db.collection('dailyCheckins').doc(String(telegramUserId));
     const snapshot = await docRef.get();
@@ -48,15 +48,14 @@ async function getCheckinState(telegramUserId) {
     const data = snapshot.data();
     const lastCheckInDate = data?.lastCheckInDate ?? '';
     const todayCheckedIn = lastCheckInDate === today;
-    // Detect broken streak: last check-in was before yesterday
-    // If the user missed a day, the streak is 0
-    let currentStreak = data?.currentStreak ?? 0;
+    // Detect broken streak: last check-in was before yesterday. The effective
+    // streak is 0, computed on the read path — deliberately NOT persisted (L4):
+    // a write here is non-transactional and could race a concurrent check-in
+    // transaction, clobbering its fresh streak. The check-in transaction resets
+    // the stored value atomically instead, and every read recomputes the
+    // effective streak, so a stale stored value is never served or relied on.
     const isStreakBroken = !todayCheckedIn && lastCheckInDate !== '' && lastCheckInDate !== yesterday;
-    if (isStreakBroken) {
-        currentStreak = 0;
-        // Persist the reset so subsequent reads are accurate
-        await docRef.set({ currentStreak: 0 }, { merge: true });
-    }
+    const currentStreak = isStreakBroken ? 0 : (data?.currentStreak ?? 0);
     return {
         currentStreak,
         longestStreak: data?.longestStreak ?? 0,
@@ -65,7 +64,7 @@ async function getCheckinState(telegramUserId) {
         todayCheckedIn,
     };
 }
-async function processCheckIn(telegramUserId, telegramUsername) {
+export async function processCheckIn(telegramUserId, telegramUsername) {
     const db = getFirestore();
     const docRef = db.collection('dailyCheckins').doc(String(telegramUserId));
     const today = getTodayDateString();
@@ -211,6 +210,18 @@ export const dailyCheckin = onRequest({
                 reason: 'already_checked_in',
             });
             return;
+        }
+        // L5: also deliver the reward code by bot DM for a persistent copy.
+        // Fail-open: a DM failure (e.g. the user never started the bot) must
+        // never fail the check-in — the code is still shown in-app.
+        if (result.rewardGranted && result.rewardCode) {
+            void sendTelegramRewardMessage(botToken, telegramUserId, {
+                headline: '🎉 Daily check-in reward!',
+                label: result.milestoneLabel ?? 'discount',
+                code: result.rewardCode,
+            }).catch(() => {
+                // Silently ignore
+            });
         }
         response.status(200).json({
             ok: true,

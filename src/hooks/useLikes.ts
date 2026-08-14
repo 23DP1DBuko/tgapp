@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { updateProductLikesCount } from '../lib/firebase/products'
-import { readStoredJson, writeStoredJson } from '../lib/storage'
+import { readUserStateJson, writeUserStateJson } from '../lib/userState'
+import { translate } from '../lib/i18n/translate'
+import type { TranslationKey } from '../lib/i18n/translations'
 import type { Product } from '../types/product'
 
 const LIKED_PRODUCTS_STORAGE_KEY = 'yungwear-liked-products'
 
 export type UseLikesOptions = {
-  requireTelegramAccess: (action: string) => boolean
+  requireTelegramAccess: (actionKey: TranslationKey) => boolean
   productIdSet: Set<string>
   initData: string
   onError?: (message: string) => void
@@ -28,7 +30,7 @@ export function useLikes(options: UseLikesOptions): UseLikesResult {
   const reportError = onError ?? console.error
 
   const [likedProductIds, setLikedProductIds] = useState<string[]>(() =>
-    readStoredJson<string[]>(LIKED_PRODUCTS_STORAGE_KEY, []),
+    readUserStateJson<string[]>(LIKED_PRODUCTS_STORAGE_KEY, []),
   )
   const [hasUnreadLikes, setHasUnreadLikes] = useState(false)
 
@@ -37,7 +39,7 @@ export function useLikes(options: UseLikesOptions): UseLikesResult {
   }, [])
 
   useEffect(() => {
-    writeStoredJson(LIKED_PRODUCTS_STORAGE_KEY, likedProductIds)
+    writeUserStateJson(LIKED_PRODUCTS_STORAGE_KEY, likedProductIds)
   }, [likedProductIds])
 
   // Remove liked product IDs that no longer exist in the product set
@@ -62,7 +64,7 @@ export function useLikes(options: UseLikesOptions): UseLikesResult {
   const likedCount = validLikedProductIds.length
 
   async function handleToggleLike(product: Product) {
-    if (!requireTelegramAccess('Likes')) {
+    if (!requireTelegramAccess('gateAction.likes')) {
       return
     }
 
@@ -92,7 +94,7 @@ export function useLikes(options: UseLikesOptions): UseLikesResult {
         setHasUnreadLikes(false)
       }
       reportError(
-        error instanceof Error ? error.message : 'Failed to update likes.',
+        error instanceof Error ? error.message : translate('likes.failed'),
       )
     }
   }

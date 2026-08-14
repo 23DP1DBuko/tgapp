@@ -47,8 +47,8 @@ This document lists checks a human developer must complete **before each public 
 
 ### 3.1 Firestore rules (`firestore.rules`)
 - [ ] Review each `match` block — does it allow only the minimum access needed?
-- [ ] Confirm client writes to `orders`, `userRewards`, `pollVotes`, `telegramSubscribers`, `productNotifySubscriptions`, `dailyCheckins`, `userConsent`, `userSettings`, `presence` collections are **denied**
-- [ ] Confirm admin-only collections (`promoCodes`, `campaigns`, `giveaways`, `tasks`, `broadcasts`, `polls`) have `allow write: if false` for client access
+- [ ] Confirm client writes to `orders`, `userRewards`, `telegramSubscribers`, `dailyCheckins`, `userConsent`, `userSettings`, `presence`, `referralRewards`, `userStats` collections are **denied**
+- [ ] Confirm admin-only collections (`promoCodes`, `campaigns`, `giveaways`, `tasks`, `broadcasts`) have `allow write: if false` for client access
 - [ ] Confirm document validation functions (`isProductDocument`, `isOrderDocument`, etc.) exist and are strict
 - [ ] Verify no `allow write: if true` rules exist on any collection
 

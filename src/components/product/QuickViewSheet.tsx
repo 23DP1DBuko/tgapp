@@ -1,9 +1,22 @@
 import { useState } from 'react'
 import { Heart } from 'lucide-react'
 
-import { triggerHapticFeedback, triggerHapticNotification } from '../../lib/telegram/webApp'
-import { getProductAccessLevel } from '../../lib/earlyAccess'
+import { triggerHapticFeedback } from '../../lib/telegram/webApp'
+import {
+  EARLY_ACCESS_REFERRAL_THRESHOLD,
+  getProductAccessLevel,
+  isEligibleForEarlyAccess,
+  referralFriendsWord,
+} from '../../lib/earlyAccess'
+import { useReferral } from '../../hooks/useReferral'
 import { BottomSheet } from '../ui/BottomSheet'
+import { useI18n } from '../../lib/i18n'
+import { formatDateTime } from '../../lib/i18n/locale'
+import {
+  getProductDiscountLabel,
+  getProductEffectivePrice,
+  hasProductDiscount,
+} from '../../lib/productPrice'
 import { HoldToCancelButton } from './HoldToCancelButton'
 import type { Product } from '../../types/product'
 
@@ -12,14 +25,17 @@ type QuickViewSheetProps = {
   product: Product | null
   isLiked: boolean
   isInCart: boolean
-  isSubscribed: boolean
+  /** True when the product is a prize in a non-draft giveaway — not buyable. */
+  isGiveawayPrize: boolean
+  /** True when the product's giveaway has already been drawn — shown as "Given Away". */
+  isGivenAway: boolean
   onClose: () => void
   onToggleLike: (product: Product) => void
   onAddToCart: (product: Product) => void
   onRemoveFromCart: (productId: string) => void
-  onSubscribe: (productId: string) => Promise<void>
-  onUnsubscribe: (productId: string) => Promise<void>
   onOpenDetail: (productId: string) => void
+  onOpenRewards: () => void
+  initData: string
 }
 
 export function QuickViewSheet({
@@ -27,22 +43,47 @@ export function QuickViewSheet({
   product,
   isLiked,
   isInCart,
-  isSubscribed: productSubscribed,
+  isGiveawayPrize,
+  isGivenAway,
   onClose,
   onToggleLike,
   onAddToCart,
   onRemoveFromCart,
-  onSubscribe,
-  onUnsubscribe,
   onOpenDetail,
+  onOpenRewards,
+  initData,
 }: QuickViewSheetProps) {
+  const { t, language } = useI18n()
+  const hasDiscount = product ? hasProductDiscount(product) : false
+  const effectivePrice = product
+    ? getProductEffectivePrice(product.price, product.discountType, product.discountValue)
+    : 0
+  const discountLabel = product ? getProductDiscountLabel(product) : null
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
+  // Fetch referral status only while the sheet is actually open — the sheet
+  // is always mounted in the catalog, so this avoids a fetch on every visit.
+  const { referralInfo } = useReferral(initData, isOpen && product !== null)
 
   if (!product) return null
 
   const accessLevel = product.isAvailable
     ? getProductAccessLevel(product)
     : 'private'
+  const isEarlyAccessRestricted =
+    accessLevel === 'early_access' &&
+    !isEligibleForEarlyAccess(referralInfo?.referralCount ?? 0)
+  const dropStartDate =
+    product.earlyAccessAt?.toDate() ?? product.publicAt?.toDate()
+  const dropStartLabel = dropStartDate
+    ? formatDateTime(language, dropStartDate)
+    : ''
+
+  // Flag-only "upcoming" products (no scheduled dates) are not for sale yet
+  const isUpcomingFlagged = product.upcoming === true && accessLevel === 'public'
+  const isNotBuyable = accessLevel === 'private' || isUpcomingFlagged
+  const notBuyableLabel = accessLevel === 'private'
+    ? t('product.dropStarts', { date: dropStartLabel })
+    : t('product.comingSoon')
   const images = product.images.length > 0 ? product.images : [null]
   const currentImage = images[selectedImageIndex] ?? images[0] ?? null
 
@@ -55,7 +96,7 @@ export function QuickViewSheet({
   }
 
   return (
-    <BottomSheet isOpen={isOpen} onClose={onClose} maxHeightPct={80}>
+    <BottomSheet isOpen={isOpen} onClose={onClose} label={product?.name} maxHeightPct={80}>
       {/* Image gallery */}
       <div
         className="relative overflow-hidden rounded-[18px] border border-white/10 bg-black/20"
@@ -102,7 +143,7 @@ export function QuickViewSheet({
           />
         ) : (
           <div className="flex aspect-square w-full items-center justify-center text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
-            No Image
+            {t('qv.noImage')}
           </div>
         )}
       </div>
@@ -118,8 +159,20 @@ export function QuickViewSheet({
               {product.brandNames.join(' - ') || product.category}
             </p>
           </div>
-          <span className="shrink-0 text-lg font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
-            {product.price} {product.currency}
+          <span className="flex shrink-0 items-baseline gap-1.5">
+            {hasDiscount ? (
+              <span className="text-xs font-medium text-[var(--shop-muted)]/60 line-through">
+                {product.price} {product.currency}
+              </span>
+            ) : null}
+            <span className="text-lg font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
+              {effectivePrice} {product.currency}
+            </span>
+            {hasDiscount && discountLabel ? (
+              <span className="rounded-full bg-amber-400/95 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.14em] text-black">
+                {discountLabel}
+              </span>
+            ) : null}
           </span>
         </div>
 
@@ -132,13 +185,13 @@ export function QuickViewSheet({
 
         {/* Availability label */}
         {!product.isAvailable && (
-          <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]/50">
-            Currently unavailable
+          <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--shop-muted)]/70">
+            {t('qv.unavailable')}
           </p>
         )}
         {accessLevel === 'early_access' && (
           <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-400">
-            Early Access
+            {t('qv.earlyAccess')}
           </p>
         )}
       </div>
@@ -157,7 +210,7 @@ export function QuickViewSheet({
               ? 'bg-[var(--shop-red)]/18 text-[var(--shop-red)]'
               : 'bg-white/10 text-[var(--shop-cream)]'
           }`}
-          aria-label={isLiked ? 'Unlike' : 'Like'}
+          aria-label={isLiked ? t('qv.unlikeAria') : t('qv.likeAria')}
         >
           <Heart
             className="w-4 h-4 flex-shrink-0"
@@ -169,8 +222,43 @@ export function QuickViewSheet({
           {product.likesCount}
         </button>
 
-        {/* Dynamic center: HoldToCancelButton when available, Notify Me toggle when sold out/upcoming */}
-        {product.isAvailable ? (
+        {/* Dynamic center: Add to cart when available, static label when sold out/upcoming */}
+        {isGiveawayPrize ? (
+          <button
+            type="button"
+            onClick={() => {
+              triggerHapticFeedback('light')
+              onOpenRewards()
+              onClose()
+            }}
+            className="flex h-12 flex-1 items-center justify-center rounded-2xl border-2 border-dashed border-amber-500/30 bg-amber-500/12 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-400 transition-colors hover:bg-amber-500/18 active:scale-[0.98]"
+          >
+            {t('product.giveawayCta')}
+          </button>
+        ) : isGivenAway ? (
+          <div className="flex h-12 flex-1 items-center justify-center rounded-2xl border-2 border-dashed border-white/20 bg-white/8 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--shop-muted)]">
+            {t('card.givenAway')}
+          </div>
+        ) : isNotBuyable ? (
+          <div className="flex h-12 flex-1 cursor-not-allowed items-center justify-center rounded-2xl border-2 border-dashed border-white/20 bg-white/8 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
+            {notBuyableLabel}
+          </div>
+        ) : isEarlyAccessRestricted ? (
+          <button
+            type="button"
+            onClick={() => {
+              triggerHapticFeedback('light')
+              onOpenRewards()
+              onClose()
+            }}
+            className="flex h-12 flex-1 items-center justify-center rounded-2xl border-2 border-dashed border-amber-500/30 bg-amber-500/12 text-xs font-semibold uppercase tracking-[0.2em] text-amber-400 transition-colors hover:bg-amber-500/18 active:scale-[0.98]"
+          >
+            {t('product.earlyAccessCta', {
+              needed: EARLY_ACCESS_REFERRAL_THRESHOLD,
+              friends: referralFriendsWord(),
+            })}
+          </button>
+        ) : product.isAvailable ? (
           <div className="flex-1">
             <HoldToCancelButton
               isInCart={isInCart}
@@ -179,29 +267,9 @@ export function QuickViewSheet({
             />
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={async () => {
-              triggerHapticFeedback('light')
-              if (productSubscribed) {
-                await onUnsubscribe(product.id)
-              } else {
-                await onSubscribe(product.id)
-                triggerHapticNotification('success')
-              }
-            }}
-            className={`flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-sm font-bold uppercase tracking-[0.2em] transition-all active:scale-[0.98] ${
-              productSubscribed
-                ? 'border-2 border-[var(--shop-purple)] bg-[var(--shop-purple)]/12 text-[var(--shop-purple)]'
-                : 'border-2 border-dashed border-white/20 bg-white/8 text-[var(--shop-cream)]'
-            }`}
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill={productSubscribed ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-              <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-            </svg>
-            {productSubscribed ? 'NOTIFY ME ✓' : 'NOTIFY ME'}
-          </button>
+          <div className="flex h-12 flex-1 items-center justify-center rounded-2xl border-2 border-dashed border-white/20 bg-white/8 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--shop-muted)]">
+            {t('qv.unavailableCta')}
+          </div>
         )}
 
         {/* Details button — matches h-12 + rounded-2xl */}
@@ -212,9 +280,9 @@ export function QuickViewSheet({
             onOpenDetail(product.id)
             onClose()
           }}
-          className="flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[#1C1622] px-4 text-xs font-semibold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#2a1f30]"
+          className="flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[var(--shop-panel-solid)] px-4 text-xs font-semibold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#2a1f30]"
         >
-          Details
+          {t('qv.details')}
           <svg
             viewBox="0 0 24 24"
             className="h-4 w-4 flex-shrink-0"

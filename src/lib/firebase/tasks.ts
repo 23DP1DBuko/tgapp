@@ -42,15 +42,16 @@ function toTask(
   return {
     id: docSnapshot.id,
     title: data.title ?? '',
-    rewardType: data.rewardType === 'ticket' ? 'ticket' : 'coupon',
-    rewardValue: data.rewardValue ?? '',
     status: data.status === 'inactive' ? 'inactive' : 'active',
     sortOrder: data.sortOrder ?? 0,
     actionUrl: typeof data.actionUrl === 'string' && data.actionUrl.trim().length > 0
       ? data.actionUrl.trim()
       : undefined,
-    actionLabel: typeof data.actionLabel === 'string' && data.actionLabel.trim().length > 0
-      ? data.actionLabel.trim()
+    taskType: (['join_channel', 'invite_friend', 'like_product'].includes(data.taskType ?? '')
+      ? data.taskType
+      : 'custom') as Task['taskType'],
+    requiredCount: typeof data.requiredCount === 'number' && data.requiredCount >= 1
+      ? data.requiredCount
       : undefined,
     createdAt: typeof data.createdAt === 'string' ? data.createdAt : null,
     updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null,

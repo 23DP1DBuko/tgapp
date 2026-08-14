@@ -4,11 +4,10 @@ import {
   Bar,
   XAxis,
   YAxis,
+  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   Cell,
-  LineChart,
-  Line,
 } from 'recharts'
 
 import type { Product } from '../../types/product'
@@ -20,10 +19,14 @@ type AdminDashboardPanelProps = {
   soldCount: number
 }
 
+// Chart palette mirrors the design tokens in index.css (--shop-*) so the
+// dashboard stays on-brand and follows any future token changes.
 const CHART_PURPLE = '#8b3dff'
 const CHART_MAGENTA = '#d91f6f'
 const CHART_RED = '#ff4d5a'
-const CHART_MUTED = 'rgba(255,255,255,0.12)'
+const CHART_EMERALD = '#10b981' // --shop-emerald (success / revenue)
+const CHART_TICK = 'rgba(212,184,207,0.65)' // --shop-muted at reduced alpha
+const CHART_GRID = 'rgba(255,255,255,0.06)'
 
 
 export function AdminDashboardPanel({
@@ -31,12 +34,17 @@ export function AdminDashboardPanel({
   analytics,
   soldCount,
 }: AdminDashboardPanelProps) {
-  const analyticsData = analytics ?? {
-    totalUsers: 0,
-    itemsSold: soldCount,
-    grossRevenueEur: 0,
-    referralCount: 0,
-  }
+  // Stable fallback so derived useMemos don't re-run on every render when
+  // analytics is still loading (analytics ?? {...} would mint a new object).
+  const analyticsData = useMemo(
+    () => analytics ?? {
+      totalUsers: 0,
+      itemsSold: soldCount,
+      grossRevenueEur: 0,
+      referralCount: 0,
+    },
+    [analytics, soldCount],
+  )
 
   const formattedRevenue = useMemo(() => {
     return new Intl.NumberFormat('de-DE', {
@@ -122,25 +130,6 @@ export function AdminDashboardPanel({
 
   const maxHeat = topProducts.length > 0 ? Math.max(...topProducts.map((p) => p.heatScore), 1) : 1
 
-  // ── Sparkline mock trend data (shows 7 data points simulating growth) ──
-  const sparkData = useMemo(() => {
-    // Distribute the current value across 7 days with realistic variation
-    function buildSeries(current: number): { day: string; value: number }[] {
-      const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
-      const base = Math.max(1, Math.round(current * 0.3))
-      return days.map((day, i) => ({
-        day,
-        value: Math.max(0, Math.round(base + (current - base) * (i / (days.length - 1)) + (Math.random() - 0.5) * base * 0.2)),
-      }))
-    }
-    return {
-      users: buildSeries(analyticsData.totalUsers),
-      volume: buildSeries(analyticsData.itemsSold),
-      revenue: buildSeries(Math.round(analyticsData.grossRevenueEur / 10)),
-      referrals: buildSeries(analyticsData.referralCount),
-    }
-  }, [analyticsData])
-
   return (
     <div className="space-y-5">
       {/* ── METRICS ROW: 4 compact stat cards with mini bars ── */}
@@ -150,32 +139,24 @@ export function AdminDashboardPanel({
           value={analyticsData.totalUsers.toLocaleString()}
           sublabel="Users"
           color={CHART_PURPLE}
-          sparkData={sparkData.users}
-          sparkColor={CHART_PURPLE}
         />
         <StatCard
           label="Volume"
           value={`${analyticsData.itemsSold}`}
           sublabel="Pieces Sold"
           color={CHART_MAGENTA}
-          sparkData={sparkData.volume}
-          sparkColor={CHART_MAGENTA}
         />
         <StatCard
           label="Revenue"
           value={formattedRevenue}
           sublabel="Gross"
-          color="#10b981"
-          sparkData={sparkData.revenue}
-          sparkColor="#10b981"
+          color={CHART_EMERALD}
         />
         <StatCard
           label="Referrals"
           value={analyticsData.referralCount.toLocaleString()}
           sublabel="Invites"
           color={CHART_RED}
-          sparkData={sparkData.referrals}
-          sparkColor={CHART_RED}
         />
       </div>
 
@@ -225,34 +206,39 @@ export function AdminDashboardPanel({
             <div className="mt-2">
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={categoryData} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="catGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={CHART_MAGENTA} stopOpacity={1} />
+                      <stop offset="100%" stopColor={CHART_PURPLE} stopOpacity={0.8} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke={CHART_GRID} strokeDasharray="3 3" />
                   <XAxis
                     dataKey="category"
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: CHART_MUTED, fontSize: 9, fontWeight: 600 }}
+                    tick={{ fill: CHART_TICK, fontSize: 9, fontWeight: 600 }}
                     dy={6}
                   />
                   <YAxis hide />
                   <Tooltip
                     cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                    isAnimationActive={false}
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null
                       const d = payload[0].payload
                       return (
-                        <div className="rounded-xl border border-white/10 bg-[#1C1622] px-3 py-2 text-xs shadow-lg">
-                          <p className="font-semibold text-[var(--shop-cream)]">{d.category}</p>
-                          <p className="text-[var(--shop-muted)]">{d.count} item{d.count !== 1 ? 's' : ''}</p>
-                        </div>
+                        <TooltipShell
+                          label={d.category}
+                          value={`${d.count} item${d.count !== 1 ? 's' : ''}`}
+                          color={CHART_MAGENTA}
+                        />
                       )
                     }}
                   />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={32} isAnimationActive={false}>
                     {categoryData.map((_, i) => (
-                      <Cell
-                        key={i}
-                        fill={i % 2 === 0 ? CHART_PURPLE : CHART_MAGENTA}
-                        fillOpacity={0.8}
-                      />
+                      <Cell key={i} fill="url(#catGrad)" />
                     ))}
                   </Bar>
                 </BarChart>
@@ -279,27 +265,29 @@ export function AdminDashboardPanel({
                     type="category"
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: CHART_MUTED, fontSize: 10, fontWeight: 600 }}
+                    tick={{ fill: CHART_TICK, fontSize: 10, fontWeight: 600 }}
                     width={70}
                   />
                   <Tooltip
                     cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                    isAnimationActive={false}
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null
                       const d = payload[0].payload
                       return (
-                        <div className="rounded-xl border border-white/10 bg-[#1C1622] px-3 py-2 text-xs shadow-lg">
-                          <p className="font-semibold text-[var(--shop-cream)]">{d.name}</p>
-                          <p className="text-[var(--shop-muted)]">{d.value} item{d.value !== 1 ? 's' : ''}</p>
-                        </div>
+                        <TooltipShell
+                          label={d.name}
+                          value={`${d.value} item${d.value !== 1 ? 's' : ''}`}
+                          color={payload[0].color}
+                        />
                       )
                     }}
                   />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28} isAnimationActive={false}>
                     {productStatusData.map((_, i) => (
                       <Cell
                         key={i}
-                        fill={i === 0 ? '#10b981' : CHART_RED}
+                        fill={i === 0 ? CHART_EMERALD : CHART_RED}
                         fillOpacity={0.8}
                       />
                     ))}
@@ -317,11 +305,18 @@ export function AdminDashboardPanel({
           <div className="mt-2">
             <ResponsiveContainer width="100%" height={140}>
               <BarChart data={metricsComparison} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="metricGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={CHART_RED} stopOpacity={1} />
+                    <stop offset="100%" stopColor={CHART_PURPLE} stopOpacity={0.8} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} stroke={CHART_GRID} strokeDasharray="3 3" />
                 <XAxis
                   dataKey="metric"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fill: CHART_MUTED, fontSize: 9, fontWeight: 600 }}
+                  tick={{ fill: CHART_TICK, fontSize: 9, fontWeight: 600 }}
                   dy={6}
                 />
                 <YAxis hide />
@@ -331,20 +326,17 @@ export function AdminDashboardPanel({
                     if (!active || !payload?.length) return null
                     const d = payload[0].payload
                     return (
-                      <div className="rounded-xl border border-white/10 bg-[#1C1622] px-3 py-2 text-xs shadow-lg">
-                        <p className="font-semibold text-[var(--shop-cream)]">{d.metric}</p>
-                        <p className="text-[var(--shop-muted)]">{d.value.toLocaleString()}</p>
-                      </div>
+                      <TooltipShell
+                        label={d.metric}
+                        value={d.value.toLocaleString()}
+                        color={CHART_PURPLE}
+                      />
                     )
                   }}
                 />
-                <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false}>
                   {metricsComparison.map((_, i) => (
-                    <Cell
-                      key={i}
-                      fill={i === 0 ? CHART_PURPLE : i === 1 ? CHART_MAGENTA : CHART_RED}
-                      fillOpacity={0.8}
-                    />
+                    <Cell key={i} fill="url(#metricGrad)" />
                   ))}
                 </Bar>
               </BarChart>
@@ -376,6 +368,29 @@ export function AdminDashboardPanel({
   )
 }
 
+// ─── Branded chart tooltip shell ───
+
+type TooltipShellProps = {
+  label: string
+  value: string
+  color?: string
+}
+
+function TooltipShell({ label, value, color }: TooltipShellProps) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-[rgba(24,12,26,0.92)] px-3 py-2 text-xs shadow-[0_10px_30px_rgba(0,0,0,0.45)] backdrop-blur-md">
+      <p className="flex items-center gap-1.5 font-semibold uppercase tracking-[0.14em] text-[var(--shop-cream)]">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ backgroundColor: color ?? CHART_PURPLE }}
+        />
+        {label}
+      </p>
+      <p className="mt-1 text-[var(--shop-muted)]">{value}</p>
+    </div>
+  )
+}
+
 // ─── Stat Card (compact metric with colored accent) ───
 
 type StatCardProps = {
@@ -383,41 +398,19 @@ type StatCardProps = {
   value: string
   sublabel: string
   color: string
-  sparkData?: { day: string; value: number }[]
-  sparkColor?: string
 }
 
-function StatCard({ label, value, sublabel, color, sparkData, sparkColor }: StatCardProps) {
+function StatCard({ label, value, sublabel, color }: StatCardProps) {
   return (
-    <div className="rounded-[22px] border border-white/10 bg-[#1C1622] px-4 py-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span
-            className="h-1.5 w-1.5 rounded-full shrink-0"
-            style={{ backgroundColor: color }}
-          />
-          <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
-            {label}
-          </p>
-        </div>
-        {/* Sparkline */}
-        {sparkData && sparkData.length > 0 && (
-          <div className="shrink-0">
-            <ResponsiveContainer width={56} height={24}>
-              <LineChart data={sparkData} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke={sparkColor ?? color}
-                  strokeWidth={1.5}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+    <div className="rounded-[22px] border border-white/10 bg-[var(--shop-panel-solid)] px-4 py-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="h-1.5 w-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+        />
+        <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
+          {label}
+        </p>
       </div>
       <p className="text-lg font-bold tracking-[-0.03em] text-[var(--shop-cream)]">
         {value}
@@ -439,8 +432,9 @@ type ChartCardProps = {
 
 function ChartCard({ title, subtitle, children }: ChartCardProps) {
   return (
-    <article className="rounded-[24px] border border-white/10 bg-[#1C1622] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.25)]">
+    <article className="rounded-[24px] border border-white/10 bg-[var(--shop-panel-solid)] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.25)]">
       <div className="flex items-center gap-2">
+        <span className="h-3.5 w-1 shrink-0 rounded-full bg-[linear-gradient(180deg,var(--shop-magenta),var(--shop-purple))]" />
         <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--shop-muted)]">
           {title}
         </p>
